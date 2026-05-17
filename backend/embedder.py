@@ -1,296 +1,419 @@
 """
-embedder.py — Text → Vectors Pipeline for BotKit India
-Chunks crawled text, generates embeddings via Ollama (nomic-embed-text),
-and stores everything in ChromaDB for semantic search.
+embedder.py
+
+Turns crawled pages into searchable vector data.
+
+Flow:
+1. Take pages from crawler.py
+2. Split each page into 500-word chunks with 50-word overlap
+3. Convert each chunk into an embedding using Ollama
+4. Store the chunks in a ChromaDB collection for one bot_id
+5. Retrieve the most relevant chunks later for a user question
 """
 
-import ollama
-import chromadb
-from chromadb.config import Settings
-import hashlib
-import os
-import logging
-from dotenv import load_dotenv
+from __future__ import annotations
 
-load_dotenv()
+import hashlib
+import logging
+import re
+from typing import Any
+
+import chromadb
+import ollama
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
-EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chromadb_data")
-CHUNK_SIZE = 500        # Target characters per chunk
-CHUNK_OVERLAP = 100     # Overlap between chunks for context continuity
-COLLECTION_NAME = "botkit_docs"
+EMBED_MODEL = "nomic-embed-text"
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
+TOP_K = 5
+
+_CHROMA_CLIENT: chromadb.ClientAPI | None = None
 
 
-def get_chroma_client():
-    """Initialize and return a persistent ChromaDB client."""
-    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
-    return client
+class EmbedderError(Exception):
+    """Base exception for embedder-related problems."""
 
 
-def get_or_create_collection():
-    """Get or create the ChromaDB collection for storing embeddings."""
+class OllamaUnavailableError(EmbedderError):
+    """Raised when Ollama cannot generate embeddings."""
+
+
+def get_chroma_client() -> chromadb.ClientAPI:
+    """
+    Return a single in-memory ChromaDB client for this Python process.
+
+    This matches your Day 2 requirement of using ChromaDB locally in memory.
+    """
+    global _CHROMA_CLIENT
+
+    if _CHROMA_CLIENT is None:
+        _CHROMA_CLIENT = chromadb.Client()
+
+    return _CHROMA_CLIENT
+
+
+def _collection_name(bot_id: str) -> str:
+    """Create a safe Chroma collection name from a bot_id."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", bot_id.strip())
+    if not cleaned:
+        raise ValueError("bot_id cannot be empty.")
+    return f"bot_{cleaned}"
+
+
+def _replace_collection(bot_id: str):
+    """
+    Create a fresh collection for one bot_id.
+
+    If a collection already exists, we replace it gracefully so repeated runs
+    do not create duplicate chunks.
+    """
     client = get_chroma_client()
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}  # Use cosine similarity
-    )
-    return collection
+    name = _collection_name(bot_id)
+
+    try:
+        client.delete_collection(name=name)
+        logger.info("Existing collection for bot_id '%s' was replaced.", bot_id)
+    except Exception:
+        pass
+
+    return client.create_collection(name=name, metadata={"hnsw:space": "cosine"})
 
 
-def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+def get_or_create_collection(bot_id: str = "default"):
     """
-    Split text into overlapping chunks for embedding.
-    
-    Tries to split at sentence boundaries for cleaner chunks.
-    Falls back to character-level splitting if sentences are too long.
-    
-    Args:
-        text: The full text to chunk
-        chunk_size: Target size per chunk in characters
-        overlap: Overlap between consecutive chunks
-        
-    Returns:
-        List of text chunks
-    """
-    if not text or len(text) < chunk_size:
-        return [text] if text else []
+    Compatibility helper for existing backend code.
 
-    # Split into sentences first
-    sentences = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
+    Day 2 code should prefer one collection per bot_id, but this keeps older
+    imports working while you finish the rest of the project.
+    """
+    client = get_chroma_client()
+    name = _collection_name(bot_id)
+    try:
+        return client.get_collection(name=name)
+    except Exception:
+        return client.create_collection(name=name, metadata={"hnsw:space": "cosine"})
+
+
+def _get_collection(bot_id: str):
+    """Return the collection for a bot_id if it exists."""
+    client = get_chroma_client()
+    return client.get_collection(name=_collection_name(bot_id))
+
+
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """
+    Split text into overlapping word chunks.
+
+    Example:
+    - chunk 1 = words 0 to 499
+    - chunk 2 = words 450 to 949
+
+    We use words instead of characters because your Day 2 requirement is
+    explicitly 500 words with 50-word overlap.
+    """
+    if not text or not text.strip():
+        return []
+
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size.")
+
+    words = text.split()
+    if not words:
+        return []
+
+    chunks: list[str] = []
+    step = chunk_size - chunk_overlap
+
+    for start in range(0, len(words), step):
+        chunk_words = words[start : start + chunk_size]
+        if not chunk_words:
             continue
-        # Split on sentence-ending punctuation
-        import re
-        parts = re.split(r'(?<=[.!?])\s+', line)
-        sentences.extend(parts)
+        chunks.append(" ".join(chunk_words))
+        if start + chunk_size >= len(words):
+            break
 
-    chunks = []
-    current_chunk = ""
-
-    for sentence in sentences:
-        # If adding this sentence exceeds chunk_size, save current and start new
-        if len(current_chunk) + len(sentence) + 1 > chunk_size and current_chunk:
-            chunks.append(current_chunk.strip())
-            # Keep overlap from the end of current chunk
-            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-            current_chunk = overlap_text + " " + sentence
-        else:
-            current_chunk = current_chunk + " " + sentence if current_chunk else sentence
-
-    # Don't forget the last chunk
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-
-    logger.info(f"📦 Split text into {len(chunks)} chunks (avg {sum(len(c) for c in chunks) // max(len(chunks), 1)} chars)")
     return chunks
 
 
-def generate_embedding(text: str) -> list[float]:
+def _embed_text(text: str) -> list[float]:
     """
-    Generate a 768-dimensional embedding vector using Ollama nomic-embed-text.
-    
-    Args:
-        text: Text to embed
-        
-    Returns:
-        List of 768 floats (the embedding vector)
+    Generate one embedding using Ollama.
+
+    If Ollama is not running, we raise a friendly error that can be shown to
+    the user instead of a raw stack trace.
     """
     try:
-        result = ollama.embeddings(model=EMBED_MODEL, prompt=text)
-        return result["embedding"]
-    except Exception as e:
-        logger.error(f"Embedding generation failed: {e}")
-        raise
+        if hasattr(ollama, "embed"):
+            response = ollama.embed(model=EMBED_MODEL, input=text)
+            embeddings = response.get("embeddings")
+            if embeddings:
+                return embeddings[0]
+            if response.get("embedding"):
+                return response["embedding"]
+
+        response = ollama.embeddings(model=EMBED_MODEL, prompt=text)
+        return response["embedding"]
+    except Exception as exc:
+        raise OllamaUnavailableError(
+            "Could not generate embeddings. Make sure Ollama is running and "
+            f"the '{EMBED_MODEL}' model is installed."
+        ) from exc
 
 
-def generate_chunk_id(url: str, chunk_index: int) -> str:
-    """Generate a deterministic unique ID for a chunk to avoid duplicates."""
-    raw = f"{url}::chunk::{chunk_index}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+def _make_chunk_id(bot_id: str, url: str, chunk_index: int) -> str:
+    """Create a stable ID for each stored chunk."""
+    raw = f"{bot_id}:{url}:{chunk_index}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def is_url_already_embedded(url: str) -> bool:
-    """Check if a URL has already been embedded in ChromaDB."""
-    collection = get_or_create_collection()
-    try:
-        results = collection.get(
-            where={"source_url": url},
-            limit=1
-        )
-        return len(results["ids"]) > 0
-    except Exception:
-        return False
+def _embed_pages(bot_id: str, pages: list[dict[str, Any]], replace_existing: bool) -> dict[str, Any]:
+    """Internal implementation shared by new and legacy call styles."""
+    collection = _replace_collection(bot_id) if replace_existing else get_or_create_collection(bot_id)
 
+    ids: list[str] = []
+    documents: list[str] = []
+    embeddings: list[list[float]] = []
+    metadatas: list[dict[str, Any]] = []
 
-def embed_and_store(crawled_data: dict, force: bool = False) -> dict:
-    """
-    Main pipeline: chunk text → generate embeddings → store in ChromaDB.
-    
-    Args:
-        crawled_data: Output from crawler.crawl() — dict with url, title, text, etc.
-        force: If True, re-embed even if URL already exists
-        
-    Returns:
-        Dictionary with status information
-    """
-    url = crawled_data["url"]
-    title = crawled_data["title"]
-    text = crawled_data["text"]
+    total_pages = 0
+    total_chunks = 0
 
-    # Check for duplicates
-    if not force and is_url_already_embedded(url):
-        logger.info(f"⏭️ Already embedded: {url}")
-        return {
-            "status": "skipped",
-            "reason": "already_embedded",
-            "url": url
-        }
+    for page_index, page in enumerate(pages):
+        url = str(page.get("url", "")).strip()
+        text = str(page.get("text", "")).strip()
+        title = str(page.get("title", "")).strip() or url
 
-    # Step 1: Chunk the text
-    chunks = chunk_text(text)
-    if not chunks:
-        return {
-            "status": "error",
-            "reason": "no_chunks_generated",
-            "url": url
-        }
-
-    # Step 2: Generate embeddings for each chunk
-    logger.info(f"🧠 Generating embeddings for {len(chunks)} chunks...")
-    ids = []
-    embeddings = []
-    documents = []
-    metadatas = []
-
-    for i, chunk in enumerate(chunks):
-        try:
-            embedding = generate_embedding(chunk)
-            chunk_id = generate_chunk_id(url, i)
-
-            ids.append(chunk_id)
-            embeddings.append(embedding)
-            documents.append(chunk)
-            metadatas.append({
-                "source_url": url,
-                "title": title,
-                "domain": crawled_data.get("domain", ""),
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-                "crawled_at": crawled_data.get("timestamp", ""),
-            })
-        except Exception as e:
-            logger.error(f"Failed to embed chunk {i}: {e}")
+        if not url or not text:
+            logger.warning("Skipping page %s because url or text is missing.", page_index)
             continue
 
-    if not ids:
-        return {
-            "status": "error",
-            "reason": "all_embeddings_failed",
-            "url": url
-        }
+        total_pages += 1
+        chunks = chunk_text(text)
+        logger.info("Page %s split into %s chunks.", url, len(chunks))
 
-    # Step 3: Store in ChromaDB
-    collection = get_or_create_collection()
+        for chunk_index, chunk in enumerate(chunks):
+            embedding = _embed_text(chunk)
+
+            ids.append(_make_chunk_id(bot_id, url, chunk_index))
+            documents.append(chunk)
+            embeddings.append(embedding)
+            metadatas.append(
+                {
+                    "bot_id": bot_id,
+                    "source_url": url,
+                    "title": title,
+                    "page_index": page_index,
+                    "chunk_index": chunk_index,
+                }
+            )
+            total_chunks += 1
+
+    if not documents:
+        raise ValueError("No valid page content was available to embed.")
+
     collection.upsert(
         ids=ids,
-        embeddings=embeddings,
         documents=documents,
-        metadatas=metadatas
+        embeddings=embeddings,
+        metadatas=metadatas,
     )
 
-    result = {
+    logger.info(
+        "Stored %s chunks from %s pages in collection %s.",
+        total_chunks,
+        total_pages,
+        _collection_name(bot_id),
+    )
+
+    return {
         "status": "success",
-        "url": url,
-        "title": title,
-        "chunks_stored": len(ids),
-        "total_chunks": len(chunks),
+        "bot_id": bot_id,
+        "pages_processed": total_pages,
+        "chunks_stored": total_chunks,
+        "collection_name": _collection_name(bot_id),
     }
 
-    logger.info(f"✅ Stored {len(ids)} chunks for: {title}")
-    return result
 
-
-def search(query: str, n_results: int = 5) -> list[dict]:
+def embed_and_store(bot_id: str | dict[str, Any], pages: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """
-    Semantic search — find the most relevant chunks for a query.
-    
+    Embed all crawled pages for one chatbot and store them in ChromaDB.
+
     Args:
-        query: The search query text
-        n_results: Number of results to return
-        
+        bot_id: Unique identifier for the chatbot
+        pages: List of page dictionaries such as:
+               [{"url": "...", "text": "..."}, {"url": "...", "text": "..."}]
+
     Returns:
-        List of dicts with document text, metadata, and distance score
+        Summary dictionary with counts and status information
     """
-    collection = get_or_create_collection()
+    if isinstance(bot_id, dict):
+        # Backward-compatible mode for the current FastAPI code:
+        # embed_and_store(crawled_page_dict, force=False)
+        return _embed_pages("default", [bot_id], replace_existing=False)
 
-    # Generate embedding for the query
-    query_embedding = generate_embedding(query)
+    if not bot_id or not bot_id.strip():
+        raise ValueError("bot_id is required.")
 
-    # Search ChromaDB
+    if not pages:
+        raise ValueError("pages must contain at least one page.")
+
+    return _embed_pages(bot_id, pages, replace_existing=True)
+
+
+def retrieve(bot_id: str, question: str, top_k: int = TOP_K) -> list[dict[str, Any]]:
+    """
+    Retrieve the most relevant chunks for a user question.
+
+    Args:
+        bot_id: Which chatbot's data to search
+        question: User question to embed and search for
+        top_k: Number of matching chunks to return
+
+    Returns:
+        List of matches with chunk text and source URL
+    """
+    if not question or not question.strip():
+        raise ValueError("question cannot be empty.")
+
+    try:
+        collection = _get_collection(bot_id)
+    except Exception as exc:
+        raise ValueError(
+            f"No ChromaDB collection found for bot_id '{bot_id}'. "
+            "Run embed_and_store() first."
+        ) from exc
+
+    query_embedding = _embed_text(question)
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=n_results,
-        include=["documents", "metadatas", "distances"]
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"],
     )
 
-    # Format results
-    search_results = []
-    for i in range(len(results["ids"][0])):
-        search_results.append({
-            "text": results["documents"][0][i],
-            "metadata": results["metadatas"][0][i],
-            "distance": results["distances"][0][i],
-            "relevance": round(1 - results["distances"][0][i], 4)
-        })
+    matches: list[dict[str, Any]] = []
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
 
-    return search_results
-
-
-def get_stats() -> dict:
-    """Get statistics about the current ChromaDB collection."""
-    try:
-        collection = get_or_create_collection()
-        count = collection.count()
-
-        # Get unique URLs
-        if count > 0:
-            all_metadata = collection.get(include=["metadatas"])
-            unique_urls = set()
-            for meta in all_metadata["metadatas"]:
-                if "source_url" in meta:
-                    unique_urls.add(meta["source_url"])
-            return {
-                "total_chunks": count,
-                "total_sources": len(unique_urls),
-                "sources": list(unique_urls)
+    for document, metadata, distance in zip(documents, metadatas, distances):
+        matches.append(
+            {
+                "chunk": document,
+                "url": metadata.get("source_url", ""),
+                "title": metadata.get("title", ""),
+                "chunk_index": metadata.get("chunk_index", -1),
+                "distance": distance,
             }
-        return {"total_chunks": 0, "total_sources": 0, "sources": []}
-    except Exception as e:
-        logger.error(f"Stats error: {e}")
-        return {"total_chunks": 0, "total_sources": 0, "sources": [], "error": str(e)}
+        )
+
+    return matches
+
+
+def search(query: str, n_results: int = 5, bot_id: str = "default") -> list[dict[str, Any]]:
+    """
+    Compatibility wrapper for existing chat.py code.
+
+    New Day 2 code should call retrieve(bot_id, question, top_k).
+    """
+    matches = retrieve(bot_id, query, top_k=n_results)
+    return [
+        {
+            "text": match["chunk"],
+            "metadata": {
+                "source_url": match["url"],
+                "title": match["title"],
+                "chunk_index": match["chunk_index"],
+            },
+            "distance": match["distance"],
+            "relevance": round(1 - match["distance"], 4),
+        }
+        for match in matches
+    ]
+
+
+def get_stats(bot_id: str | None = None) -> dict[str, Any]:
+    """
+    Small helper for debugging or API status checks.
+
+    If bot_id is provided, we return the chunk count for just that bot.
+    """
+    client = get_chroma_client()
+
+    if bot_id:
+        try:
+            collection = _get_collection(bot_id)
+            return {
+                "bot_id": bot_id,
+                "collection_name": _collection_name(bot_id),
+                "total_chunks": collection.count(),
+            }
+        except Exception:
+            return {
+                "bot_id": bot_id,
+                "collection_name": _collection_name(bot_id),
+                "total_chunks": 0,
+            }
+
+    collections = client.list_collections()
+    return {
+        "total_collections": len(collections),
+        "collections": [collection.name for collection in collections],
+    }
 
 
 if __name__ == "__main__":
-    # Quick test — embed some sample text
-    sample = {
-        "url": "https://example.com/test",
-        "title": "Test Document",
-        "text": "This is a test document for BotKit India. " * 20,
-        "domain": "example.com",
-        "timestamp": "2026-05-16T00:00:00",
-    }
+    # Complete Day 2 test block:
+    # 1. Store fake pages
+    # 2. Ask a question
+    # 3. Check whether the right chunk comes back
+    sample_pages = [
+        {
+            "url": "https://example.com/python",
+            "title": "Python Basics",
+            "text": (
+                "Python is a programming language used for web apps, automation, "
+                "data analysis, and AI projects. Python has simple syntax and is "
+                "popular for beginner-friendly development. "
+            )
+            * 40,
+        },
+        {
+            "url": "https://example.com/chromadb",
+            "title": "ChromaDB Notes",
+            "text": (
+                "ChromaDB is a vector database. It stores text chunks together with "
+                "their embeddings so that we can retrieve similar content later. "
+                "This is useful in retrieval augmented generation systems. "
+            )
+            * 40,
+        },
+    ]
 
-    print("Embedding test document...")
-    result = embed_and_store(sample)
-    print(f"Result: {result}")
+    test_bot_id = "demo-bot"
+    test_question = "Which database stores embeddings for retrieval?"
 
-    print("\nSearching for 'test document'...")
-    results = search("test document")
-    for r in results:
-        print(f"  [{r['relevance']}] {r['text'][:80]}...")
+    try:
+        print("Embedding sample pages...")
+        store_result = embed_and_store(test_bot_id, sample_pages)
+        print("Chunks stored successfully.")
+        print(store_result)
+
+        print("\nRetrieving relevant chunks...")
+        retrieved = retrieve(test_bot_id, test_question, top_k=5)
+
+        if not retrieved:
+            print("No results found.")
+        else:
+            print("\nTop result:")
+            print(f"URL: {retrieved[0]['url']}")
+            print(f"Title: {retrieved[0]['title']}")
+            print(f"Chunk index: {retrieved[0]['chunk_index']}")
+            print(f"Text preview: {retrieved[0]['chunk'][:300]}...")
+
+    except OllamaUnavailableError as exc:
+        print(f"Ollama error: {exc}")
+        print("Start Ollama first, then run: python embedder.py")
+    except Exception as exc:
+        print(f"Test failed: {exc}")
