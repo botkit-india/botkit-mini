@@ -4,7 +4,9 @@ requests
 beautifulsoup4
 langchain
 langchain-community
+langchain-text-splitters
 chromadb
-ollama
 groq
 python-dotenv
+ollama
+playwright

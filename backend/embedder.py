@@ -1,13 +1,11 @@
 """
-embedder.py -- Day 2 & 3: Botkit Mini
---------------------------------------
+embedder.py -- Day 2, 3, 4+5: Botkit Mini
+-------------------------------------------
 Author  : Manav (Member 2)
 Branch  : manav/dev
 
-Day 3 Improvements:
-- Added duplicate prevention: re-crawling same bot_id deletes and recreates collection
-- Added comments explaining EphemeralClient limitation
-- Added TODO for PersistentClient upgrade
+Day 3: Duplicate prevention, EphemeralClient comments
+Day 4+5: Smart chunking based on page count, top_k=7 default
 """
 
 import chromadb
@@ -22,7 +20,7 @@ EMBED_MODEL   = "nomic-embed-text"
 
 # NOTE: EphemeralClient stores data IN MEMORY only.
 # This means all embeddings are lost when the Python process exits.
-# This is fine for Day 2/3 testing but NOT suitable for production.
+# This is fine for testing but NOT suitable for production.
 # TODO: Switch to PersistentClient for full product:
 #   chromadb.PersistentClient(path="./chromadb_data")
 chroma_client = chromadb.EphemeralClient()
@@ -72,7 +70,28 @@ def _embed(text: str) -> list[float]:
     return response["embedding"]
 
 
-def embed_and_store(bot_id: str, pages: list[dict]) -> None:
+def _smart_chunk_size(num_pages: int) -> int:
+    """
+    Day 4+5: Smart chunking — smaller chunks for small sites,
+    larger chunks for bigger sites.
+
+    - Less than 10 pages -> chunk_size=300 (more granular for small content)
+    - 10+ pages -> chunk_size=500 (standard size for larger sites)
+    """
+    if num_pages < 10:
+        return 300
+    return 500
+
+
+def embed_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> None:
+    """
+    Embed all crawled pages and store in ChromaDB.
+
+    Args:
+        bot_id: Unique identifier for this chatbot
+        pages: List of {url, text} dicts from crawler.py
+        chunk_size: Override chunk size. If None, uses smart chunking based on page count.
+    """
     print(f"\n[embedder] Starting embed_and_store: bot_id={bot_id!r}")
     print(f"[embedder] Pages received: {len(pages)}")
     _check_ollama()
@@ -80,8 +99,13 @@ def embed_and_store(bot_id: str, pages: list[dict]) -> None:
     # Use _replace_collection to prevent duplicate chunks on repeated runs
     collection = _replace_collection(bot_id)
 
+    # Day 4+5: Smart chunk size based on number of pages
+    if chunk_size is None:
+        chunk_size = _smart_chunk_size(len(pages))
+    print(f"[embedder] Using chunk_size={chunk_size} (smart chunking)")
+
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
+        chunk_size=chunk_size,
         chunk_overlap=CHUNK_OVERLAP,
         length_function=len,
     )
@@ -116,7 +140,13 @@ def embed_and_store(bot_id: str, pages: list[dict]) -> None:
         print("[embedder] No chunks generated.")
 
 
-def retrieve(bot_id: str, question: str, top_k: int = 5) -> list[dict]:
+def retrieve(bot_id: str, question: str, top_k: int = 7) -> list[dict]:
+    """
+    Retrieve the most relevant chunks for a user question.
+
+    Day 4+5: Changed default top_k from 5 to 7 for better answer quality.
+    More context chunks = more detailed and accurate LLM answers.
+    """
     print(f"\n[embedder] Retrieving top {top_k} chunks for: {question!r}")
     _check_ollama()
     collection = _get_collection(bot_id)
@@ -143,7 +173,7 @@ def retrieve(bot_id: str, question: str, top_k: int = 5) -> list[dict]:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  EMBEDDER.PY -- Test Run (Day 3)")
+    print("  EMBEDDER.PY -- Test Run (Day 4+5)")
     print("=" * 60)
 
     fake_pages = [
@@ -163,19 +193,19 @@ if __name__ == "__main__":
 
     BOT_ID = "test_bot_001"
 
-    # Test 1 -- Store
-    print("\n--- TEST 1: Store pages ---")
+    # Test 1 -- Store (smart chunking: 3 pages < 10, so chunk_size=300)
+    print("\n--- TEST 1: Store pages (smart chunking) ---")
     try:
         embed_and_store(bot_id=BOT_ID, pages=fake_pages)
     except RuntimeError as e:
         print(e)
         sys.exit(1)
 
-    # Test 2 -- Retrieve
-    print("\n--- TEST 2: Retrieve chunks ---")
+    # Test 2 -- Retrieve with top_k=7
+    print("\n--- TEST 2: Retrieve chunks (top_k=7) ---")
     for q in ["How much is the Pro plan?", "Is data private?", "Who founded BotKit?"]:
         print(f"\nQ: {q}")
-        for r in retrieve(BOT_ID, q, top_k=2):
+        for r in retrieve(BOT_ID, q, top_k=3):  # only 3 chunks exist
             print(f"  [{r['distance']}] {r['source_url']}")
             print(f"  {r['text'][:120]}...")
 
@@ -183,7 +213,7 @@ if __name__ == "__main__":
     print("\n--- TEST 3: Empty page ---")
     embed_and_store(BOT_ID, [{"url": "https://example.com/empty", "text": ""}])
 
-    # Test 4 -- Duplicate prevention: run embed_and_store again, chunk count should stay the same
+    # Test 4 -- Duplicate prevention
     print("\n--- TEST 4: Duplicate prevention ---")
     print("Running embed_and_store a SECOND time with same data...")
     embed_and_store(bot_id=BOT_ID, pages=fake_pages)
@@ -192,6 +222,12 @@ if __name__ == "__main__":
     print(f"Chunk count after second run: {count}")
     assert count == 3, f"Expected 3 chunks, got {count} -- duplicate prevention FAILED!"
     print("Duplicate prevention OK: chunk count stayed at 3, not 6.")
+
+    # Test 5 -- Smart chunking override
+    print("\n--- TEST 5: Manual chunk_size override ---")
+    embed_and_store(bot_id="override_test", pages=fake_pages, chunk_size=200)
+    col2 = chroma_client.get_collection("bot_override_test")
+    print(f"Override test chunk count: {col2.count()} (should be >= 3 with smaller chunks)")
 
     print("\n" + "=" * 60)
     print("  All tests passed!")
