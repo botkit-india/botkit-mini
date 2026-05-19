@@ -735,3 +735,73 @@ a { text-decoration: none; color: inherit; }
     .message-bubble { max-width: 88%; }
     .chat-page { padding: 0 0.75rem; }
 }
+
+/* ========================================
+   APP.JS COMPATIBILITY STYLES
+======================================== */
+
+.message {
+    display: flex;
+    flex-direction: column;
+    margin: 0.85rem 0;
+    animation: fadeUp 0.22s ease both;
+}
+
+.user-message {
+    align-items: flex-end;
+}
+
+.bot-message {
+    align-items: flex-start;
+}
+
+.bubble {
+    max-width: 74%;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--r-md);
+    font-size: 0.86rem;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.user-message .bubble {
+    background: var(--white);
+    color: var(--black);
+    border-bottom-right-radius: 4px;
+}
+
+.bot-message .bubble {
+    background: var(--grey-900);
+    border: 1px solid var(--grey-800);
+    color: var(--white);
+    border-bottom-left-radius: 4px;
+}
+
+.sources {
+    margin-top: 0.45rem;
+    font-size: 0.7rem;
+    color: var(--grey-500);
+}
+
+.sources a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.sources a:hover {
+    text-decoration: underline;
+}
+
+/* ========================================
+   THINKING STATE
+======================================== */
+
+#thinking {
+    padding: 0.35rem 0;
+}
+
+#thinking small {
+    font-size: 0.72rem;
+    color: var(--grey-600);
+    font-style: italic;
+}
