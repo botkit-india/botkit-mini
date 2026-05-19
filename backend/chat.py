@@ -1,3 +1,15 @@
+"""
+chat.py -- Day 3, Day 6 Upgrades: Botkit Mini
+-------------------------------------------
+Author  : Chaitanya & Manav
+Branch  : manav/dev
+
+Upgrades:
+- Conversational Memory (history support)
+- Query Rewriting (uses history to create a self-contained search query)
+- Multi-turn conversation support with Groq
+"""
+
 import os
 from groq import Groq
 from dotenv import load_dotenv
@@ -10,16 +22,60 @@ load_dotenv(Path(__file__).parent / '.env')
 # Initialize Groq client
 groq_client = Groq(api_key=os.getenv('GROQ_API_KEY'))
 
-def answer_question(bot_id, question):
+
+def rewrite_query(question: str, chat_history: list) -> str:
+    """
+    Use LLM to rewrite user question with context of chat history 
+    so it becomes a standalone query that ChromaDB can search for.
+    """
+    if not chat_history:
+        return question
+
+    print(f"[chat] Rewriting query using chat history...")
+    
+    # Format last 4 turns for context
+    history_str = ""
+    for msg in chat_history[-4:]:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        history_str += f"{role}: {msg.get('content')}\n"
+        
+    prompt = f"""Given the following conversation history and a follow-up question, rewrite the follow-up question to be a standalone, self-contained search query. Do NOT answer the question. Just output the rewritten query.
+
+Conversation History:
+{history_str}
+
+Follow-up Question: {question}
+
+Standalone Rewritten Question:"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model='llama-3.3-70b-versatile',
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=100,
+            temperature=0.0
+        )
+        rewritten = response.choices[0].message.content.strip().strip('"').strip()
+        print(f"[chat] Original: {question!r} -> Standalone Query: {rewritten!r}")
+        return rewritten
+    except Exception as e:
+        print(f"[chat] Query rewriting failed: {e}")
+        return question
+
+
+def answer_question(bot_id: str, question: str, chat_history: list = None) -> dict:
     """
     Main RAG function.
-    Takes a bot_id and question, returns an answer from Groq
-    based only on the website content stored in ChromaDB.
+    Takes a bot_id, question, and optional chat history.
+    Returns an answer from Groq based only on the website context.
     """
+    if chat_history is None:
+        chat_history = []
 
-    # Step 1 — Retrieve top 5 relevant chunks from ChromaDB
-    print(f"\nSearching ChromaDB for: '{question}'")
-    results = retrieve(bot_id, question, top_k=5)
+    # Step 1 — Rewrite query if history exists, then retrieve chunks
+    search_query = rewrite_query(question, chat_history)
+    print(f"\nSearching ChromaDB for: '{search_query}'")
+    results = retrieve(bot_id, search_query, top_k=7)
 
     if not results:
         return {
@@ -34,8 +90,8 @@ def answer_question(bot_id, question):
     sources = list(set(r['source_url'] for r in results))
     print(f"Found {len(results)} relevant chunks from {len(sources)} pages")
 
-    # Step 4 — Build the prompt (Day 6: improved for more detailed answers)
-    prompt = f"""You are a helpful AI assistant for a website.
+    # Step 4 — Build system prompt instructions
+    system_instruction = f"""You are a helpful AI assistant for a website.
 Answer based ONLY on the context below.
 Be specific — include names, numbers, prices if available in context.
 If the answer is not in the context say exactly:
@@ -43,22 +99,28 @@ If the answer is not in the context say exactly:
 Never make up information. Never use outside knowledge.
 
 Context:
-{context}
+{context}"""
 
-Question: {question}
+    # Step 5 — Construct message payload with history
+    messages = [
+        {"role": "system", "content": system_instruction}
+    ]
+    
+    # Add conversation history
+    for msg in chat_history:
+        role = msg.get("role", "user")
+        if role not in ["user", "assistant", "system"]:
+            role = "user"
+        messages.append({"role": role, "content": msg.get("content", "")})
+        
+    # Add current question
+    messages.append({"role": "user", "content": question})
 
-Detailed Answer:"""
-
-    # Step 5 — Call Groq API
+    # Step 6 — Call Groq API
     print("Calling Groq API...")
     response = groq_client.chat.completions.create(
         model='llama-3.3-70b-versatile',
-        messages=[
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ],
+        messages=messages,
         max_tokens=500,
         temperature=0.1
     )
@@ -91,19 +153,27 @@ if __name__ == "__main__":
     embed_and_store(bot_id, pages)
     print("Stored successfully\n")
 
-    # Step 3 — Ask questions
+    # Step 3 — Ask questions (testing memory)
     print("Step 3: Asking questions...\n")
 
-    questions = [
-        "What kind of books are available?",
-        "What categories exist on this website?",
-        "What is the price of books?",
-        "Do you sell electronics?"
-    ]
+    history = []
+    
+    # Q1
+    q1 = "What is the price of Tipping the Velvet?"
+    print(f"Q: {q1}")
+    res1 = answer_question(bot_id, q1, history)
+    print(f"A: {res1['answer']}")
+    print(f"Sources: {res1['sources']}")
+    print("-" * 50)
+    
+    # Add to history
+    history.append({"role": "user", "content": q1})
+    history.append({"role": "assistant", "content": res1["answer"]})
 
-    for q in questions:
-        print(f"Q: {q}")
-        result = answer_question(bot_id, q)
-        print(f"A: {result['answer']}")
-        print(f"Sources: {result['sources']}")
-        print("-" * 50)
+    # Q2 (Follow up using conversational memory)
+    q2 = "Is it in stock?"
+    print(f"Q: {q2}")
+    res2 = answer_question(bot_id, q2, history)
+    print(f"A: {res2['answer']}")
+    print(f"Sources: {res2['sources']}")
+    print("-" * 50)

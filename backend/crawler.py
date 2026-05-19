@@ -1,17 +1,17 @@
 """
-crawler.py -- Day 4+5: Botkit Mini
+crawler.py -- Day 4+5 & Day 6: Botkit Mini
 -----------------------------------
 Crawls websites using requests+BeautifulSoup (fast) with Playwright
 as a fallback for JS-heavy sites (React, Next.js, etc).
 
-Playwright is only used when BeautifulSoup extracts less than 200 chars,
-which usually means the page content is rendered by JavaScript.
+Preserves page structure (markdown), titles, and descriptions for advanced RAG context.
 """
 
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import urllib3
+import markdownify
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -33,15 +33,47 @@ def normalize_url(url):
     return url
 
 
+def extract_metadata(soup):
+    """Extract page title and meta description for context enrichment"""
+    title = ""
+    description = ""
+    if soup:
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+        
+        desc_tag = soup.find('meta', attrs={'name': 'description'}) or soup.find('meta', attrs={'property': 'og:description'})
+        if desc_tag and desc_tag.get('content'):
+            description = desc_tag.get('content').strip()
+    return title, description
+
+
+def html_to_clean_markdown(html_content):
+    """Convert HTML content to clean, readable markdown format"""
+    if not html_content:
+        return ""
+    try:
+        temp_soup = BeautifulSoup(html_content, 'html.parser')
+        # Strip script/style/nav/footer/header for clean content markdown
+        for tag in temp_soup(['script', 'style', 'nav', 'footer', 'header']):
+            tag.decompose()
+        md = markdownify.markdownify(str(temp_soup), heading_style="ATX")
+        # Clean empty lines
+        lines = [line.strip() for line in md.split('\n') if line.strip()]
+        return '\n'.join(lines)
+    except Exception as e:
+        print(f"[crawler] Markdown conversion error: {e}")
+        return ""
+
+
 def crawl_page_with_playwright(url):
     """
     Fallback crawler for JS-heavy websites.
     Opens a real Chromium browser (headless), waits for JS to render,
-    then extracts all visible text from the page.
+    then extracts text, full rendered HTML, title, and description.
     """
     if not PLAYWRIGHT_AVAILABLE:
         print(f"[playwright] Skipped {url} -- Playwright not installed")
-        return ""
+        return "", "", "", ""
 
     print(f"[playwright] Rendering JS page: {url}")
     try:
@@ -49,7 +81,20 @@ def crawl_page_with_playwright(url):
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto(url, wait_until="networkidle", timeout=30000)
-            # Remove nav, footer, scripts to get clean content text
+            
+            title = page.title() or ""
+            
+            # Attempt to extract meta description
+            description = ""
+            try:
+                description = page.locator('meta[name="description"]').get_attribute('content') or ""
+            except Exception:
+                try:
+                    description = page.locator('meta[property="og:description"]').get_attribute('content') or ""
+                except Exception:
+                    pass
+
+            # Remove navigation, footers, headers, scripts, and styles before getting text
             page.evaluate("""
                 () => {
                     ['nav','footer','header','script','style']
@@ -59,22 +104,20 @@ def crawl_page_with_playwright(url):
             """)
             text = page.inner_text('body')
             text = ' '.join(text.split())
+            
+            html_content = page.content()
             browser.close()
             print(f"[playwright] Got {len(text)} chars from {url}")
-            return text
+            return text, html_content, title, description
     except Exception as e:
         print(f"[playwright] Failed on {url}: {e}")
-        return ""
+        return "", "", "", ""
 
 
 def crawl_website(start_url, max_pages=30):
     """
     Given a starting URL, crawl all internal pages on the same domain.
-    Returns a list of dicts: [{url, text}, {url, text}, ...]
-
-    Strategy:
-    1. First try requests + BeautifulSoup (fast, works for most sites)
-    2. If extracted text < 200 chars, fallback to Playwright (JS rendering)
+    Returns a list of dicts: [{url, text, title, description, markdown}, ...]
     """
     visited = set()
     to_visit = [normalize_url(start_url)]
@@ -107,6 +150,8 @@ def crawl_website(start_url, max_pages=30):
                 continue
 
             soup = BeautifulSoup(response.text, 'html.parser')
+            title, description = extract_metadata(soup)
+            html_content = response.text
 
             # Remove script and style tags -- we don't want that text
             for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
@@ -119,16 +164,29 @@ def crawl_website(start_url, max_pages=30):
             # Day 4+5: If BeautifulSoup got very little text, try Playwright
             if len(text) < 200 and PLAYWRIGHT_AVAILABLE:
                 print(f"[crawler] Low content ({len(text)} chars), trying Playwright...")
-                pw_text = crawl_page_with_playwright(url)
+                pw_text, pw_html, pw_title, pw_desc = crawl_page_with_playwright(url)
                 if len(pw_text) > len(text):
                     text = pw_text
+                    html_content = pw_html
+                    if pw_title:
+                        title = pw_title
+                    if pw_desc:
+                        description = pw_desc
                     method = "playwright"
+
+            # Generate clean markdown from HTML content
+            markdown = html_to_clean_markdown(html_content)
+            if not markdown:
+                markdown = text
 
             # Only save pages that have meaningful content
             if len(text) > 100:
                 pages.append({
                     'url': url,
-                    'text': text
+                    'text': text,
+                    'title': title,
+                    'description': description,
+                    'markdown': markdown
                 })
                 print(f"Crawled [{len(pages)}]: {url} -- {len(text)} chars ({method})")
 
@@ -154,11 +212,25 @@ def crawl_website(start_url, max_pages=30):
                 response = requests.get(url, headers=headers,
                                         timeout=15, verify=False)
                 soup = BeautifulSoup(response.text, 'html.parser')
+                title, description = extract_metadata(soup)
+                html_content = response.text
+                
                 for tag in soup(['script','style','nav','footer','header']):
                     tag.decompose()
                 text = ' '.join(soup.get_text().split())
+                
+                markdown = html_to_clean_markdown(html_content)
+                if not markdown:
+                    markdown = text
+                
                 if len(text) > 100:
-                    pages.append({'url': url, 'text': text})
+                    pages.append({
+                        'url': url,
+                        'text': text,
+                        'title': title,
+                        'description': description,
+                        'markdown': markdown
+                    })
                     print(f"Retry succeeded: {url}")
             except Exception as e2:
                 print(f"Retry also failed {url}: {e2}")
@@ -192,6 +264,8 @@ if __name__ == "__main__":
     print("\n--- RESULTS ---")
     for page in results:
         print(f"\nURL: {page['url']}")
-        print(f"Text preview: {page['text'][:200]}...")
+        print(f"Title: {page.get('title')}")
+        print(f"Description: {page.get('description')}")
+        print(f"Markdown preview:\n{page.get('markdown')[:200]}...")
 
     print(f"\nTotal pages crawled: {len(results)}")

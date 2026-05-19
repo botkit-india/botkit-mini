@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import List, Optional, Dict
 from dotenv import load_dotenv
 
 from crawler import crawl_website
@@ -45,6 +46,7 @@ class CrawlRequest(BaseModel):
 class ChatRequest(BaseModel):
     bot_id: str
     question: str
+    history: Optional[List[Dict[str, str]]] = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────
@@ -130,7 +132,7 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
-        result = answer_question(req.bot_id, req.question)
+        result = answer_question(req.bot_id, req.question, req.history)
         return {
             "bot_id": req.bot_id,
             "question": req.question,
