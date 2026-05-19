@@ -34,19 +34,20 @@ def answer_question(bot_id, question):
     sources = list(set(r['source_url'] for r in results))
     print(f"Found {len(results)} relevant chunks from {len(sources)} pages")
 
-    # Step 4 — Build the prompt
-    prompt = f"""You are a helpful assistant for a website.
-Your job is to answer questions based ONLY on the context provided below.
-If the answer is not found in the context, say exactly:
+    # Step 4 — Build the prompt (Day 6: improved for more detailed answers)
+    prompt = f"""You are a helpful AI assistant for a website.
+Answer based ONLY on the context below.
+Be specific — include names, numbers, prices if available in context.
+If the answer is not in the context say exactly:
 "I don't have information about that on this website."
-Do not make up any information. Do not use outside knowledge.
+Never make up information. Never use outside knowledge.
 
-Context from website:
+Context:
 {context}
 
 Question: {question}
 
-Answer:"""
+Detailed Answer:"""
 
     # Step 5 — Call Groq API
     print("Calling Groq API...")

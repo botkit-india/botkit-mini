@@ -149,7 +149,19 @@ def crawl_website(start_url, max_pages=30):
             visited.add(url)
 
         except Exception as e:
-            print(f"Failed to crawl {url}: {e}")
+            print(f"Failed {url}: {e} — retrying once...")
+            try:
+                response = requests.get(url, headers=headers,
+                                        timeout=15, verify=False)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                for tag in soup(['script','style','nav','footer','header']):
+                    tag.decompose()
+                text = ' '.join(soup.get_text().split())
+                if len(text) > 100:
+                    pages.append({'url': url, 'text': text})
+                    print(f"Retry succeeded: {url}")
+            except Exception as e2:
+                print(f"Retry also failed {url}: {e2}")
             visited.add(url)
 
     print(f"\nCrawl complete. Pages collected: {len(pages)}")
