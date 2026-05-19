@@ -60,7 +60,12 @@
         </button>
 
       </div>
-
+<button onclick="document.getElementById('botkit-bubble').click()" 
+        style="background:#2563eb;color:white;border:none;
+               padding:6px 14px;border-radius:8px;cursor:pointer;
+               font-size:12px;">
+  Try Widget
+</button>
     </header>
 
     <!-- CHAT WINDOW -->
@@ -167,7 +172,19 @@
   </main>
 
   <script src="app.js"></script>
-
+<!-- BotKit Widget — loads with bot_id from localStorage -->
+<script>
+  (function() {
+    const botId = localStorage.getItem('bot_id');
+    if (!botId) return;
+    const script = document.createElement('script');
+    script.src = 'http://localhost:8000/static/widget.js';
+    script.setAttribute('data-bot-id', botId);
+    script.setAttribute('data-bot-name', 'Website Assistant');
+    script.setAttribute('data-color', '#2563eb');
+    document.body.appendChild(script);
+  })();
+</script>
 </body>
 
 </html>

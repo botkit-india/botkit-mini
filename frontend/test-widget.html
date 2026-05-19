@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Widget Test Page</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 800px;
+      margin: 60px auto;
+      padding: 0 20px;
+      color: #333;
+    }
+    h1 { color: #2563eb; }
+    .code-block {
+      background: #f3f4f6;
+      padding: 16px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 13px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>BotKit India — Widget Test</h1>
+  <p>This page simulates a customer's website with the BotKit widget installed.</p>
+  <p>The chat bubble should appear in the bottom-right corner.</p>
+
+  <h2>Dummy content</h2>
+  <p>Welcome to our coaching institute. We offer courses in UPSC, CAT, and JEE preparation.</p>
+  <p>Our fees start from Rs.5,000 per month. Contact us at info@institute.com</p>
+
+  <h2>How to embed on any website</h2>
+  <div class="code-block">
+    &lt;script
+      src="http://localhost:8000/static/widget.js"
+      data-bot-id="61d233d0"
+      data-bot-name="My Assistant"
+      data-color="#2563eb"
+    &gt;&lt;/script&gt;
+  </div>
+
+  <!-- THE WIDGET — paste this on any website -->
+  <script
+    src="http://localhost:8000/static/widget.js"
+    data-bot-id="PASTE_YOUR_BOT_ID_HERE"
+    data-bot-name="Website Assistant"
+    data-color="#2563eb"
+  ></script>
+</body>
+</html>
