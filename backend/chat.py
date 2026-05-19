@@ -34,15 +34,15 @@ def answer_question(bot_id, question):
     sources = list(set(r['source_url'] for r in results))
     print(f"Found {len(results)} relevant chunks from {len(sources)} pages")
 
-    # Step 4 — Build the prompt (Day 6: improved for more detailed answers)
+    # Step 4 — Build the prompt
     prompt = f"""You are a helpful AI assistant for a website.
 Answer based ONLY on the context below.
-Be specific — include names, numbers, prices if available in context.
+Be specific and detailed — include names, numbers, prices when available.
 If the answer is not in the context say exactly:
 "I don't have information about that on this website."
 Never make up information. Never use outside knowledge.
 
-Context:
+Context from website:
 {context}
 
 Question: {question}

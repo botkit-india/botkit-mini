@@ -1,5 +1,6 @@
 import uuid
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -34,7 +35,7 @@ app.mount(
 # In-memory status tracker
 # { bot_id: "crawling" | "ready" | "error" }
 bot_status = {}
-bot_info = {}  # stores extra info like pages crawled
+bot_info = {}
 
 
 # ─── Request Models ───────────────────────────────────────────
@@ -61,20 +62,31 @@ def crawl(req: CrawlRequest):
     Returns bot_id immediately — frontend polls /status to check progress.
     """
     if not req.url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Invalid URL. Must start with http or https.")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid URL. Must start with http or https."
+        )
 
     bot_id = str(uuid.uuid4())[:8]
     bot_status[bot_id] = "crawling"
     bot_info[bot_id] = {"url": req.url, "pages_crawled": 0}
 
     def run_crawl():
+        start_time = time.time()
         try:
             pages = crawl_website(req.url, max_pages=30)
+
+            # If crawl took more than 5 minutes something is wrong
+            if time.time() - start_time > 300:
+                bot_status[bot_id] = "error"
+                bot_info[bot_id]["error"] = "Crawl timed out. Try a smaller website."
+                return
+
             bot_info[bot_id]["pages_crawled"] = len(pages)
 
             if not pages:
                 bot_status[bot_id] = "error"
-                bot_info[bot_id]["error"] = "No pages could be crawled from this URL."
+                bot_info[bot_id]["error"] = "No pages crawled. Site may be JS-heavy or blocking crawlers."
                 return
 
             embed_and_store(bot_id, pages)
@@ -114,6 +126,24 @@ def status(bot_id: str):
     }
 
 
+@app.get("/bots")
+def list_bots():
+    """See all active bots and their status — for debugging"""
+    return {
+        "total": len(bot_status),
+        "bots": [
+            {
+                "bot_id": bid,
+                "status": bot_status[bid],
+                "url": bot_info[bid].get("url", ""),
+                "pages_crawled": bot_info[bid].get("pages_crawled", 0),
+                "error": bot_info[bid].get("error", None)
+            }
+            for bid in bot_status
+        ]
+    }
+
+
 @app.post("/chat")
 def chat(req: ChatRequest):
     """
@@ -121,13 +151,22 @@ def chat(req: ChatRequest):
     based only on the crawled website content.
     """
     if req.bot_id not in bot_status:
-        raise HTTPException(status_code=404, detail="Bot not found. Please crawl a website first.")
+        raise HTTPException(
+            status_code=404,
+            detail="Bot not found. This happens if the server restarted. Please crawl your website again."
+        )
 
     if bot_status[req.bot_id] != "ready":
-        raise HTTPException(status_code=400, detail=f"Bot is not ready yet. Current status: {bot_status[req.bot_id]}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bot is not ready yet. Current status: {bot_status[req.bot_id]}"
+        )
 
     if not req.question.strip():
-        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty."
+        )
 
     try:
         result = answer_question(req.bot_id, req.question)
@@ -138,4 +177,7 @@ def chat(req: ChatRequest):
             "sources": result["sources"]
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating answer: {str(e)}"
+        )
