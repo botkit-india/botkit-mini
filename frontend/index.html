@@ -6,9 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="BotKit India — Paste a URL, get an AI chatbot for your website.">
   <title>BotKit India</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
+    rel="stylesheet"
+  >
+
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -17,12 +23,14 @@
   <!--
     LAYOUT STATES (toggled by JS via class on #appLayout):
     1. Default (.state-centered)  — form card centered, results panel hidden
-    2. Crawling (.state-crawling)  — spinner shown inside form card
+    2. Crawling (.state-crawling) — spinner shown inside form card
     3. Done (.state-split)        — form slides left, results panel slides in from right
   -->
+
   <div id="appLayout" class="app-layout state-centered">
 
     <!-- ========== LEFT / CENTER — URL Form Card ========== -->
+
     <div class="form-panel" id="formPanel">
 
       <div class="brand">
@@ -39,68 +47,116 @@
         Paste a URL and we'll train an AI on your content.
       </p>
 
-      <!-- URL form -->
+      <!-- URL FORM -->
+
       <div id="urlForm">
-        <label class="form-label" for="websiteUrl">Website URL</label>
+
+        <label class="form-label" for="website-url">
+          Website URL
+        </label>
+
         <input
           type="url"
-          id="websiteUrl"
+          id="website-url"
           class="form-input"
           placeholder="https://yourwebsite.com"
           autocomplete="off"
         >
-        <button id="createBotBtn" class="btn-primary">
+
+        <button
+          id="create-btn"
+          class="btn-primary"
+          onclick="createChatbot()"
+        >
           Create Chatbot
         </button>
+
       </div>
 
-      <!-- Inline error -->
-      <p id="errorMsg" class="error-msg hidden"></p>
+      <!-- ERROR SECTION -->
 
-      <!-- Crawling status (shown during fetch) -->
-      <div id="crawlingStatus" class="crawling-status hidden">
+      <div id="error-section" class="hidden">
+        <p id="error-text" class="error-msg"></p>
+      </div>
+
+      <!-- STATUS SECTION -->
+
+      <div id="status-section" class="crawling-status hidden">
+
         <div class="spinner"></div>
+
         <div class="crawling-text">
-          <span id="statusText">Crawling your website...</span>
-          <small id="crawlCount">Pages found: 0</small>
+
+          <span id="status-text">
+            Crawling your website...
+          </span>
+
+          <small id="pages-count">
+            Pages found: 0
+          </small>
+
         </div>
+
       </div>
 
-      <!-- Progress bar -->
+      <!-- PROGRESS BAR -->
+
       <div class="progress-bar-track hidden" id="progressTrack">
         <div class="progress-bar-fill" id="progressBar"></div>
       </div>
 
-      <!-- After split: CTA to go to chat -->
-      <a href="chat.html" id="chatLink" class="btn-primary btn-chat hidden">
-        Open Chat →
-      </a>
+      <!-- SUCCESS SECTION -->
+
+      <div id="success-section" class="hidden">
+
+        <a
+          href="chat.html"
+          id="chatLink"
+          class="btn-primary btn-chat"
+          onclick="goToChat()"
+        >
+          Open Chat →
+        </a>
+
+      </div>
+
+      <!-- FOOTER -->
 
       <div class="hero-footer">
-        <span>🇮🇳</span> Made in India &nbsp;·&nbsp; No cloud &nbsp;·&nbsp; No code
+        <span>🇮🇳</span>
+        Made in India &nbsp;·&nbsp; No cloud &nbsp;·&nbsp; No code
       </div>
 
     </div>
 
-    <!-- ========== RIGHT — Crawled Results Panel ========== -->
+    <!-- ========== RIGHT — CRAWLED RESULTS PANEL ========== -->
+
     <div class="results-panel hidden" id="resultsPanel">
 
       <div class="results-header">
+
         <div class="results-title-row">
           <span class="results-icon">✦</span>
           <h2 class="results-title">Crawl Complete</h2>
         </div>
-        <div id="pagesBadge" class="pages-badge">0 pages</div>
+
+        <div id="pagesBadge" class="pages-badge">
+          0 pages
+        </div>
+
       </div>
 
-      <p class="results-sub">Here's what we found on your website:</p>
+      <p class="results-sub">
+        Here's what we found on your website:
+      </p>
 
-      <!-- Page cards go here (populated by app.js) -->
+      <!-- PAGE CARDS -->
+
       <div id="pagesList" class="pages-list"></div>
 
     </div>
 
-  </div><!-- /#appLayout -->
+  </div>
 
   <script src="app.js"></script>
 

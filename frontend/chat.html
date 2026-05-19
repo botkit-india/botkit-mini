@@ -5,91 +5,163 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="BotKit Chat — Ask anything about your website.">
+
   <title>BotKit Chat</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
+    rel="stylesheet"
+  >
+
   <link rel="stylesheet" href="style.css">
 </head>
 
-<body>
+<body onload="initChat()">
 
   <main class="chat-page">
 
     <!-- HEADER -->
+
     <header class="chat-header">
 
       <div class="chat-header-left">
+
         <div class="bot-badge"></div>
+
         <div>
           <div class="bot-title">BotKit India</div>
-          <div class="bot-subtitle">Website Assistant · Online</div>
+
+          <div class="bot-subtitle">
+            <span id="website-name">Website Assistant</span> · Online
+          </div>
         </div>
+
       </div>
 
       <div class="chat-header-right">
-        <a href="index.html" class="icon-btn" title="New chatbot">←</a>
-        <button class="icon-btn" id="clearChatBtn" title="Clear chat">⌫</button>
+
+        <a
+          href="index.html"
+          class="icon-btn"
+          title="New chatbot"
+        >
+          ←
+        </a>
+
+        <button
+          class="icon-btn"
+          id="clearChatBtn"
+          title="Clear chat"
+        >
+          ⌫
+        </button>
+
       </div>
 
     </header>
 
     <!-- CHAT WINDOW -->
-    <section class="chat-window" id="chatWindow">
+
+    <section
+      class="chat-window"
+      id="chat-window"
+    >
 
       <div class="welcome-box">
+
         <h3>Ask me anything.</h3>
-        <p>I've been trained on this website's content.</p>
+
+        <p>
+          I've been trained on this website's content.
+        </p>
+
       </div>
 
-      <!-- Suggestion chips -->
+      <!-- SUGGESTIONS -->
+
       <div class="suggestions" id="suggestions">
-        <button class="suggestion-chip" data-msg="What does this website offer?">What does this offer?</button>
-        <button class="suggestion-chip" data-msg="What are your pricing plans?">Pricing</button>
-        <button class="suggestion-chip" data-msg="How do I get started?">How to get started?</button>
+
+        <button
+          class="suggestion-chip"
+          data-msg="What does this website offer?"
+        >
+          What does this offer?
+        </button>
+
+        <button
+          class="suggestion-chip"
+          data-msg="What are your pricing plans?"
+        >
+          Pricing
+        </button>
+
+        <button
+          class="suggestion-chip"
+          data-msg="How do I get started?"
+        >
+          How to get started?
+        </button>
+
       </div>
 
-      <!-- Initial bot message -->
+      <!-- INITIAL BOT MESSAGE -->
+
       <div class="message-row bot">
+
         <div class="avatar">🤖</div>
+
         <div class="message-bubble bot-bubble">
           Hi! I'm your website assistant. Ask me anything about this website.
         </div>
-      </div>
 
-      <!-- Thinking indicator -->
-      <div id="thinkingIndicator" class="message-row bot hidden">
-        <div class="avatar">🤖</div>
-        <div class="message-bubble bot-bubble thinking">
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
       </div>
 
     </section>
 
-    <!-- Thinking label -->
-    <div id="thinkingLabel" class="thinking-label hidden">
+    <!-- THINKING INDICATOR -->
+
+    <div
+      id="thinking"
+      class="thinking-label hidden"
+    >
       <small>Bot is thinking...</small>
     </div>
 
-    <!-- INPUT -->
+    <!-- INPUT AREA -->
+
     <footer class="chat-input-area">
+
       <div class="input-wrapper">
+
         <input
           type="text"
           class="chat-input"
-          id="messageInput"
+          id="user-input"
           placeholder="Ask a question..."
           autocomplete="off"
         >
-        <button class="send-btn" id="sendBtn" title="Send">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+
+        <button
+          class="send-btn"
+          id="sendBtn"
+          title="Send"
+          onclick="sendMessage()"
+        >
+
+          <svg
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
           </svg>
+
         </button>
+
       </div>
+
     </footer>
 
   </main>

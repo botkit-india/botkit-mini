@@ -2,92 +2,76 @@
 // BotKit India — Frontend Logic
 // ========================================
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE = "http://localhost:8000";
 
 
 // ========================================
 // INDEX PAGE — CREATE CHATBOT
 // ========================================
 
-const createBotBtn = document.getElementById("createBotBtn");
+async function createChatbot() {
 
-if (createBotBtn) {
-
-    createBotBtn.addEventListener("click", () => {
-        createChatbot(document.getElementById("websiteUrl").value.trim());
-    });
-
-    document.getElementById("websiteUrl")?.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") createChatbot(e.target.value.trim());
-    });
-
-}
-
-
-async function createChatbot(url) {
+    const urlInput = document.getElementById("website-url");
+    const url = urlInput?.value.trim();
 
     if (!url) {
-        shakeInput();
+        showError("Please paste a website URL first.");
+        return;
+    }
+    if (!url.startsWith("http")) {
+        showError("URL must start with http:// or https://");
         return;
     }
 
-    const bot_id = "test_bot_001";
-    localStorage.setItem("website_url", url);
-    localStorage.setItem("bot_id", bot_id);
+    const createBtn     = document.getElementById("create-btn");
+    const progressBar   = document.getElementById("progressBar");
+    const progressTrack = document.getElementById("progressTrack");
+    const pagesCountEl  = document.getElementById("pages-count");
 
-    // --- UI refs ---
-    const layout         = document.getElementById("appLayout");
-    const urlForm        = document.getElementById("urlForm");
-    const crawlingStatus = document.getElementById("crawlingStatus");
-    const progressTrack  = document.getElementById("progressTrack");
-    const progressBar    = document.getElementById("progressBar");
-    const statusText     = document.getElementById("statusText");
-    const crawlCount     = document.getElementById("crawlCount");
-    const errorMsg       = document.getElementById("errorMsg");
-    const chatLink       = document.getElementById("chatLink");
-    const resultsPanel   = document.getElementById("resultsPanel");
-    const pagesBadge     = document.getElementById("pagesBadge");
-    const pagesList      = document.getElementById("pagesList");
-
-    // --- Show loading state ---
-    createBotBtn.disabled = true;
-    urlForm.querySelector("input").disabled = true;
-    crawlingStatus.classList.remove("hidden");
+    // Show loading state
+    createBtn.disabled = true;
     progressTrack.classList.remove("hidden");
-    errorMsg.classList.add("hidden");
+    progressBar.style.width = "10%";
+    showStatus("🔍 Connecting to crawler...");
+    hideError();
 
-    // --- Animate progress bar while waiting ---
+    // ---- Fake progress animation while crawl runs in background ----
     const stages = [
-        { text: "Crawling your website…",   progress: 20 },
-        { text: "Extracting content…",       progress: 45 },
-        { text: "Processing pages…",         progress: 70 },
-        { text: "Wrapping up…",              progress: 90 },
+        { pct: 12, label: "🌐 Fetching homepage…" },
+        { pct: 22, label: "🕷️ Discovering internal links…" },
+        { pct: 32, label: "📄 Crawling pages…" },
+        { pct: 42, label: "📄 Crawling pages…" },
+        { pct: 52, label: "📄 Crawling pages…" },
+        { pct: 60, label: "✂️ Stripping ads & navigation…" },
+        { pct: 67, label: "📝 Extracting clean content…" },
+        { pct: 74, label: "🧠 Analysing text structure…" },
+        { pct: 80, label: "💾 Building embeddings…" },
+        { pct: 86, label: "⚙️ Storing knowledge base…" },
+        { pct: 91, label: "🔗 Linking content together…" },
+        { pct: 95, label: "✨ Almost ready…" },
     ];
-
-    let count = 0;
-    let stageIdx = 0;
-    statusText.textContent = stages[0].text;
-    progressBar.style.width = stages[0].progress + "%";
+    let stageIdx    = 0;
+    let pageCounter = 0;
 
     const ticker = setInterval(() => {
-        count++;
-        crawlCount.textContent = `Pages found: ${count}`;
-        if (count % 2 === 0 && stageIdx < stages.length - 1) {
+        if (stageIdx < stages.length) {
+            const { pct, label } = stages[stageIdx];
+            progressBar.style.width = pct + "%";
+            showStatus(label);
+            pageCounter++;
+            if (pagesCountEl) pagesCountEl.textContent = `Pages found: ${pageCounter}`;
             stageIdx++;
-            statusText.textContent = stages[stageIdx].text;
-            progressBar.style.width = stages[stageIdx].progress + "%";
         }
-    }, 500);
+        // Holds at last stage until polling resolves
+    }, 1400);
 
     try {
-
-        const res = await fetch(`${API_BASE_URL}/crawl`, {
+        // POST /crawl — returns immediately with bot_id
+        const res = await fetch(`${API_BASE}/crawl`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, bot_id }),
+            body: JSON.stringify({ url }),
         });
-
-        clearInterval(ticker);
 
         if (!res.ok) {
             const err = await res.json();
@@ -95,212 +79,318 @@ async function createChatbot(url) {
         }
 
         const data = await res.json();
+        const botId = data.bot_id;
 
-        // --- Finish progress bar ---
-        statusText.textContent = "Done!";
-        progressBar.style.width = "100%";
-        crawlCount.textContent = `Pages crawled: ${data.pages_crawled}`;
+        // Save bot_id — chat page will use this
+        localStorage.setItem("bot_id", botId);
+        localStorage.setItem("website_url", url);
 
-        // --- Short pause then trigger split layout ---
-        await sleep(500);
-
-        // Transition: centered → split
-        layout.classList.remove("state-centered");
-        layout.classList.add("state-split");
-        resultsPanel.classList.remove("hidden");
-
-        // Hide crawling status; show chat link
-        crawlingStatus.classList.add("hidden");
-        progressTrack.classList.add("hidden");
-        chatLink.classList.remove("hidden");
-
-        // Update results panel header
-        pagesBadge.textContent = `${data.pages_crawled} page${data.pages_crawled !== 1 ? "s" : ""}`;
-
-        // --- Populate page cards ---
-        pagesList.innerHTML = "";
-        const previews = data.pages_preview || [];
-
-        if (previews.length === 0) {
-            pagesList.innerHTML = `<p style="font-size:0.82rem;color:var(--grey-500);">No page previews available.</p>`;
-        } else {
-            previews.forEach((page, i) => {
-                const card = document.createElement("div");
-                card.className = "page-card";
-                card.style.animationDelay = `${i * 0.05}s`;
-                card.innerHTML = `
-                    <div class="page-card-url">${escapeHtml(page.url)}</div>
-                    <div class="page-card-preview">${escapeHtml(page.preview)}</div>
-                `;
-                pagesList.appendChild(card);
-            });
-        }
+        // Start polling /status until crawl is done
+        pollStatus(botId, ticker, progressBar, pagesCountEl);
 
     } catch (err) {
         clearInterval(ticker);
-        crawlingStatus.classList.add("hidden");
+        createBtn.disabled = false;
         progressTrack.classList.add("hidden");
-        createBotBtn.disabled = false;
-        urlForm.querySelector("input").disabled = false;
-        errorMsg.textContent = `⚠️ ${err.message}`;
-        errorMsg.classList.remove("hidden");
+        progressBar.style.width = "0%";
+        showError("⚠️ " + err.message);
     }
-
 }
 
 
-function shakeInput() {
-    const input = document.getElementById("websiteUrl");
-    if (!input) return;
-    input.style.borderColor = "#f87171";
-    setTimeout(() => { input.style.borderColor = ""; }, 2000);
-    input.focus();
+// ========================================
+// POLL STATUS — check every 2s until ready
+// ========================================
+
+function pollStatus(botId, ticker, progressBar, pagesCountEl) {
+
+    const pollInterval = setInterval(async () => {
+
+        try {
+            const res = await fetch(`${API_BASE}/status/${botId}`);
+            const data = await res.json();
+
+            // Update real page count from backend
+            if (data.pages_crawled > 0 && pagesCountEl) {
+                pagesCountEl.textContent = `Pages crawled: ${data.pages_crawled}`;
+            }
+
+            if (data.status === "ready") {
+                clearInterval(pollInterval);
+                clearInterval(ticker);
+
+                progressBar.style.width = "100%";
+                showStatus("✅ Crawl complete!");
+                if (pagesCountEl) pagesCountEl.textContent = `Pages crawled: ${data.pages_crawled}`;
+
+                await sleep(500);
+                triggerSplitLayout(data);
+            }
+
+            else if (data.status === "error") {
+                clearInterval(pollInterval);
+                clearInterval(ticker);
+
+                document.getElementById("create-btn").disabled = false;
+                document.getElementById("progressTrack").classList.add("hidden");
+                showError("⚠️ " + (data.error || "Something went wrong during crawl."));
+            }
+
+            // If still "crawling" — keep polling, ticker keeps animating
+
+        } catch {
+            clearInterval(pollInterval);
+            clearInterval(ticker);
+            document.getElementById("create-btn").disabled = false;
+            showError("⚠️ Lost connection to backend.");
+        }
+
+    }, 2000);
+}
+
+
+// ========================================
+// TRIGGER SPLIT LAYOUT (after crawl done)
+// ========================================
+
+function triggerSplitLayout(data) {
+
+    const layout       = document.getElementById("appLayout");
+    const resultsPanel = document.getElementById("resultsPanel");
+    const pagesBadge   = document.getElementById("pagesBadge");
+    const pagesList    = document.getElementById("pagesList");
+
+    document.getElementById("status-section").classList.add("hidden");
+    document.getElementById("progressTrack").classList.add("hidden");
+    document.getElementById("success-section").classList.remove("hidden");
+
+    layout.classList.remove("state-centered");
+    layout.classList.add("state-split");
+    resultsPanel.classList.remove("hidden");
+
+    const count = data.pages_crawled || 0;
+    pagesBadge.textContent = `${count} page${count !== 1 ? "s" : ""}`;
+
+    // Build result cards from pages returned by /status
+    pagesList.innerHTML = "";
+    const pages = data.pages || [];
+
+    if (pages.length > 0) {
+        pages.forEach((page, i) => {
+            const card = document.createElement("div");
+            card.className = "page-card";
+            card.style.animationDelay = `${i * 0.05}s`;
+            card.innerHTML = `
+                <div class="page-card-url">${escapeHtml(page.url)}</div>
+                <div class="page-card-preview">${escapeHtml(page.preview)}</div>
+            `;
+            pagesList.appendChild(card);
+        });
+    } else {
+        // Fallback if no page data yet
+        const card = document.createElement("div");
+        card.className = "page-card";
+        card.innerHTML = `
+            <div class="page-card-url">${escapeHtml(data.url || "")}</div>
+            <div class="page-card-preview">
+                Successfully crawled ${count} page${count !== 1 ? "s" : ""}. Your chatbot is ready!
+            </div>
+        `;
+        pagesList.appendChild(card);
+    }
+}
+
+
+// ========================================
+// STATUS / ERROR UI HELPERS
+// ========================================
+
+function showStatus(msg) {
+    const s = document.getElementById("status-section");
+    const t = document.getElementById("status-text");
+    if (s) s.classList.remove("hidden");
+    if (t) t.textContent = msg;
+}
+
+function showError(msg) {
+    const s = document.getElementById("error-section");
+    const t = document.getElementById("error-text");
+    if (s) s.classList.remove("hidden");
+    if (t) t.textContent = msg;
+}
+
+function hideError() {
+    document.getElementById("error-section")?.classList.add("hidden");
+}
+
+function goToChat() {
+    window.location.href = "chat.html";
 }
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(r => setTimeout(r, ms));
 }
 
+// Enter key on URL input
+document.getElementById("website-url")
+    ?.addEventListener("keypress", e => {
+        if (e.key === "Enter") createChatbot();
+    });
+
 
 // ========================================
-// CHAT PAGE — MESSAGING
+// CHAT PAGE — INIT
 // ========================================
 
-const sendBtn      = document.getElementById("sendBtn");
-const messageInput = document.getElementById("messageInput");
-const clearChatBtn = document.getElementById("clearChatBtn");
+function initChat() {
 
-if (sendBtn)      sendBtn.addEventListener("click", sendMessage);
-if (messageInput) messageInput.addEventListener("keypress", e => {
-    if (e.key === "Enter") sendMessage();
-});
+    const websiteUrl = localStorage.getItem("website_url");
 
-document.querySelectorAll(".suggestion-chip").forEach(chip => {
-    chip.addEventListener("click", () => {
-        const msg = chip.getAttribute("data-msg");
-        if (msg && messageInput) {
-            messageInput.value = msg;
+    // Show domain in header
+    if (websiteUrl) {
+        try {
+            const hostname = new URL(websiteUrl).hostname;
+            const el = document.getElementById("website-name");
+            if (el) el.textContent = hostname;
+        } catch {}
+    }
+
+    // Wire Enter key
+    document.getElementById("user-input")
+        ?.addEventListener("keypress", e => {
+            if (e.key === "Enter") sendMessage();
+        });
+
+    // Wire suggestion chips
+    document.querySelectorAll(".suggestion-chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+            const msg = chip.getAttribute("data-msg");
+            if (!msg) return;
+            document.getElementById("user-input").value = msg;
             document.getElementById("suggestions")?.remove();
             sendMessage();
-        }
+        });
     });
-});
 
-if (clearChatBtn) {
-    clearChatBtn.addEventListener("click", () => {
-        if (confirm("Clear conversation?")) location.reload();
-    });
+    // Wire clear button
+    document.getElementById("clearChatBtn")
+        ?.addEventListener("click", () => {
+            if (confirm("Clear conversation?")) location.reload();
+        });
 }
 
 
 // ========================================
-// SEND MESSAGE
+// CHAT — SEND MESSAGE
 // ========================================
-
-const fakeResponses = [
-    "Our pricing starts at ₹999/month for the Starter plan.",
-    "You can train your chatbot using your website URL and uploaded PDFs.",
-    "BotKit supports Hindi and English out of the box.",
-    "You can deploy your chatbot on WhatsApp, your website, and more.",
-    "Your chatbot can answer customer questions 24/7.",
-    "The dashboard includes analytics and full conversation history.",
-    "BotKit uses RAG (Retrieval-Augmented Generation) for accurate answers.",
-];
 
 async function sendMessage() {
 
-    const input         = document.getElementById("messageInput");
-    const chatWindow    = document.getElementById("chatWindow");
-    const thinking      = document.getElementById("thinkingIndicator");
-    const thinkingLabel = document.getElementById("thinkingLabel");
-
-    const question = input.value.trim();
+    const input    = document.getElementById("user-input");
+    const question = input?.value.trim();
     if (!question) return;
 
-    const bot_id = localStorage.getItem("bot_id") || "test_bot_001";
-    const time   = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-    // User bubble
-    const userRow = document.createElement("div");
-    userRow.className = "message-row user";
-    userRow.innerHTML = `
-        <div class="avatar">🧑</div>
-        <div class="message-bubble user-bubble">
-            ${escapeHtml(question)}
-            <span class="timestamp">${time}</span>
-        </div>
-    `;
-    chatWindow.insertBefore(userRow, thinking);
     input.value = "";
-    chatWindow.scrollTop = chatWindow.scrollHeight;
     document.getElementById("suggestions")?.remove();
 
-    // Show thinking
-    thinking.classList.remove("hidden");
-    if (thinkingLabel) thinkingLabel.classList.remove("hidden");
-    chatWindow.scrollTop = chatWindow.scrollHeight;
+    addUserMessage(question);
+    showThinking(true);
 
-    try {
-        const res = await fetch(`${API_BASE_URL}/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bot_id, question }),
-        });
+    const botId = localStorage.getItem("bot_id");
 
-        thinking.classList.add("hidden");
-        if (thinkingLabel) thinkingLabel.classList.add("hidden");
-
-        let replyText;
-        if (!res.ok) {
-            // Backend not ready yet — fall back to fake response
-            replyText = fakeResponses[Math.floor(Math.random() * fakeResponses.length)];
-        } else {
-            const data = await res.json();
-            replyText = data.answer;
-        }
-
-        const botRow = document.createElement("div");
-        botRow.className = "message-row bot";
-        botRow.innerHTML = `
-            <div class="avatar">🤖</div>
-            <div class="message-bubble bot-bubble">
-                ${escapeHtml(replyText)}
-                <span class="timestamp">${time}</span>
-            </div>
-        `;
-        chatWindow.insertBefore(botRow, thinking);
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-
-    } catch {
-        // Network error — fall back to fake response
-        thinking.classList.add("hidden");
-        if (thinkingLabel) thinkingLabel.classList.add("hidden");
-
-        const fallback = fakeResponses[Math.floor(Math.random() * fakeResponses.length)];
-        const botRow = document.createElement("div");
-        botRow.className = "message-row bot";
-        botRow.innerHTML = `
-            <div class="avatar">🤖</div>
-            <div class="message-bubble bot-bubble">
-                ${escapeHtml(fallback)}
-                <span class="timestamp">${time}</span>
-            </div>
-        `;
-        chatWindow.insertBefore(botRow, thinking);
-        chatWindow.scrollTop = chatWindow.scrollHeight;
+    if (!botId) {
+        showThinking(false);
+        addBotMessage("No chatbot found. Please go back and crawl a website first.");
+        return;
     }
 
+    try {
+        const res = await fetch(`${API_BASE}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bot_id: botId, question }),
+        });
+
+        showThinking(false);
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            addBotMessage(`⚠️ ${data.detail || "Error getting answer."}`);
+            return;
+        }
+
+        addBotMessage(data.answer, data.sources || []);
+
+    } catch {
+        showThinking(false);
+        addBotMessage("Cannot reach the server. Make sure the backend is running.");
+    }
 }
 
 
 // ========================================
-// UTILS
+// MESSAGE BUILDERS
 // ========================================
+
+function addUserMessage(text) {
+    const chat = document.getElementById("chat-window");
+    if (!chat) return;
+    const div = document.createElement("div");
+    div.className = "message user-message";
+    div.innerHTML = `
+        <div class="bubble">${escapeHtml(text)}</div>
+        <div class="timestamp">${getTime()}</div>
+    `;
+    chat.appendChild(div);
+    scrollToBottom();
+}
+
+function addBotMessage(text, sources = []) {
+    const chat = document.getElementById("chat-window");
+    if (!chat) return;
+
+    let sourcesHtml = "";
+    if (sources.length > 0) {
+        const links = sources.map(s => {
+            try { return `<a href="${s}" target="_blank">${new URL(s).hostname}</a>`; }
+            catch { return ""; }
+        }).filter(Boolean).join(", ");
+        sourcesHtml = `<div class="sources">Sources: ${links}</div>`;
+    }
+
+    const div = document.createElement("div");
+    div.className = "message bot-message";
+    div.innerHTML = `
+        <div class="bubble">${escapeHtml(text)}</div>
+        ${sourcesHtml}
+        <div class="timestamp">${getTime()}</div>
+    `;
+    chat.appendChild(div);
+    scrollToBottom();
+}
+
+
+// ========================================
+// HELPERS
+// ========================================
+
+function showThinking(show) {
+    document.getElementById("thinking")?.classList.toggle("hidden", !show);
+}
+
+function scrollToBottom() {
+    const chat = document.getElementById("chat-window");
+    if (chat) chat.scrollTop = chat.scrollHeight;
+}
+
+function getTime() {
+    return new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
 
 function escapeHtml(str) {
     return String(str)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
+        .replace(/>/g, "&gt;");
 }
