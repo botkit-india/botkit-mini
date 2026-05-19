@@ -35,7 +35,7 @@ async function createChatbot() {
     showStatus("🔍 Connecting to crawler...");
     hideError();
 
-    // ---- Fake progress animation while crawl runs in background ----
+    // Fake progress animation while crawl runs in background
     const stages = [
         { pct: 12, label: "🌐 Fetching homepage…" },
         { pct: 22, label: "🕷️ Discovering internal links…" },
@@ -62,11 +62,9 @@ async function createChatbot() {
             if (pagesCountEl) pagesCountEl.textContent = `Pages found: ${pageCounter}`;
             stageIdx++;
         }
-        // Holds at last stage until polling resolves
     }, 1400);
 
     try {
-        // POST /crawl — returns immediately with bot_id
         const res = await fetch(`${API_BASE}/crawl`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -81,11 +79,9 @@ async function createChatbot() {
         const data = await res.json();
         const botId = data.bot_id;
 
-        // Save bot_id — chat page will use this
         localStorage.setItem("bot_id", botId);
         localStorage.setItem("website_url", url);
 
-        // Start polling /status until crawl is done
         pollStatus(botId, ticker, progressBar, pagesCountEl);
 
     } catch (err) {
@@ -110,7 +106,6 @@ function pollStatus(botId, ticker, progressBar, pagesCountEl) {
             const res = await fetch(`${API_BASE}/status/${botId}`);
             const data = await res.json();
 
-            // Update real page count from backend
             if (data.pages_crawled > 0 && pagesCountEl) {
                 pagesCountEl.textContent = `Pages crawled: ${data.pages_crawled}`;
             }
@@ -118,11 +113,9 @@ function pollStatus(botId, ticker, progressBar, pagesCountEl) {
             if (data.status === "ready") {
                 clearInterval(pollInterval);
                 clearInterval(ticker);
-
                 progressBar.style.width = "100%";
                 showStatus("✅ Crawl complete!");
                 if (pagesCountEl) pagesCountEl.textContent = `Pages crawled: ${data.pages_crawled}`;
-
                 await sleep(500);
                 triggerSplitLayout(data);
             }
@@ -130,13 +123,10 @@ function pollStatus(botId, ticker, progressBar, pagesCountEl) {
             else if (data.status === "error") {
                 clearInterval(pollInterval);
                 clearInterval(ticker);
-
                 document.getElementById("create-btn").disabled = false;
                 document.getElementById("progressTrack").classList.add("hidden");
                 showError("⚠️ " + (data.error || "Something went wrong during crawl."));
             }
-
-            // If still "crawling" — keep polling, ticker keeps animating
 
         } catch {
             clearInterval(pollInterval);
@@ -171,7 +161,6 @@ function triggerSplitLayout(data) {
     const count = data.pages_crawled || 0;
     pagesBadge.textContent = `${count} page${count !== 1 ? "s" : ""}`;
 
-    // Build result cards from pages returned by /status
     pagesList.innerHTML = "";
     const pages = data.pages || [];
 
@@ -187,7 +176,6 @@ function triggerSplitLayout(data) {
             pagesList.appendChild(card);
         });
     } else {
-        // Fallback if no page data yet
         const card = document.createElement("div");
         card.className = "page-card";
         card.innerHTML = `
@@ -231,7 +219,6 @@ function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
 }
 
-// Enter key on URL input
 document.getElementById("website-url")
     ?.addEventListener("keypress", e => {
         if (e.key === "Enter") createChatbot();
@@ -246,7 +233,6 @@ function initChat() {
 
     const websiteUrl = localStorage.getItem("website_url");
 
-    // Show domain in header
     if (websiteUrl) {
         try {
             const hostname = new URL(websiteUrl).hostname;
@@ -255,13 +241,11 @@ function initChat() {
         } catch {}
     }
 
-    // Wire Enter key
     document.getElementById("user-input")
         ?.addEventListener("keypress", e => {
             if (e.key === "Enter") sendMessage();
         });
 
-    // Wire suggestion chips
     document.querySelectorAll(".suggestion-chip").forEach(chip => {
         chip.addEventListener("click", () => {
             const msg = chip.getAttribute("data-msg");
@@ -272,7 +256,6 @@ function initChat() {
         });
     });
 
-    // Wire clear button
     document.getElementById("clearChatBtn")
         ?.addEventListener("click", () => {
             if (confirm("Clear conversation?")) location.reload();
@@ -287,10 +270,12 @@ function initChat() {
 async function sendMessage() {
 
     const input    = document.getElementById("user-input");
+    const sendBtn  = document.getElementById("send-btn");
     const question = input?.value.trim();
     if (!question) return;
 
     input.value = "";
+    if (sendBtn) sendBtn.disabled = true;
     document.getElementById("suggestions")?.remove();
 
     addUserMessage(question);
@@ -300,6 +285,7 @@ async function sendMessage() {
 
     if (!botId) {
         showThinking(false);
+        if (sendBtn) sendBtn.disabled = false;
         addBotMessage("No chatbot found. Please go back and crawl a website first.");
         return;
     }
@@ -312,6 +298,7 @@ async function sendMessage() {
         });
 
         showThinking(false);
+        if (sendBtn) sendBtn.disabled = false;
 
         const data = await res.json();
 
@@ -324,6 +311,7 @@ async function sendMessage() {
 
     } catch {
         showThinking(false);
+        if (sendBtn) sendBtn.disabled = false;
         addBotMessage("Cannot reach the server. Make sure the backend is running.");
     }
 }
@@ -353,8 +341,9 @@ function addBotMessage(text, sources = []) {
     let sourcesHtml = "";
     if (sources.length > 0) {
         const links = sources.map(s => {
-            try { return `<a href="${s}" target="_blank">${new URL(s).hostname}</a>`; }
-            catch { return ""; }
+            try {
+                return `<a href="${s}" target="_blank">${new URL(s).hostname}</a>`;
+            } catch { return ""; }
         }).filter(Boolean).join(", ");
         sourcesHtml = `<div class="sources">Sources: ${links}</div>`;
     }
@@ -362,12 +351,43 @@ function addBotMessage(text, sources = []) {
     const div = document.createElement("div");
     div.className = "message bot-message";
     div.innerHTML = `
-        <div class="bubble">${escapeHtml(text)}</div>
+        <div class="bubble">${formatMessage(text)}</div>
         ${sourcesHtml}
         <div class="timestamp">${getTime()}</div>
     `;
     chat.appendChild(div);
     scrollToBottom();
+}
+
+
+// ========================================
+// FORMAT MESSAGE — converts plain text to HTML
+// ========================================
+
+function formatMessage(text) {
+    // Escape HTML first for safety
+    let safe = String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+    // Convert **bold** or *bold*
+    safe = safe.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    safe = safe.replace(/\*(.*?)\*/g, "<strong>$1</strong>");
+
+    // Convert bullet points starting with - or •
+    safe = safe.replace(/^[-•]\s+(.+)$/gm, "<li>$1</li>");
+
+    // Wrap consecutive <li> in <ul>
+    safe = safe.replace(/(<li>.*?<\/li>\n?)+/gs, "<ul>$&</ul>");
+
+    // Convert numbered lists 1. 2. 3.
+    safe = safe.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+
+    // Convert line breaks to <br>
+    safe = safe.replace(/\n/g, "<br>");
+
+    return safe;
 }
 
 
@@ -385,7 +405,10 @@ function scrollToBottom() {
 }
 
 function getTime() {
-    return new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    return new Date().toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
 }
 
 function escapeHtml(str) {

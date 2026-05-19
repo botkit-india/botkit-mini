@@ -37,17 +37,22 @@ def answer_question(bot_id, question):
     # Step 4 — Build the prompt
     prompt = f"""You are a helpful AI assistant for a website.
 Answer based ONLY on the context below.
-Be specific and detailed — include names, numbers, prices when available.
-If the answer is not in the context say exactly:
-"I don't have information about that on this website."
+Format your answer clearly:
+- Use bullet points for lists
+- Use short paragraphs for explanations
+- Bold important words using *word*
+- Keep answers concise and easy to read
+If the answer is not in the context say:
+"I couldn't find that information on this website. 
+You can try contacting them directly for more details."
 Never make up information. Never use outside knowledge.
 
-Context from website:
+Context:
 {context}
 
 Question: {question}
 
-Detailed Answer:"""
+Answer:"""
 
     # Step 5 — Call Groq API
     print("Calling Groq API...")
