@@ -13,7 +13,7 @@ Upgrades:
 
 import chromadb
 import ollama
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 import uuid
 import sys
 import re
@@ -62,15 +62,93 @@ def _replace_collection(bot_id: str):
 
 
 def _embed(text: str) -> list[float]:
+    """Embed a single text string."""
     response = ollama.embeddings(model=EMBED_MODEL, prompt=text)
     return response["embedding"]
 
 
+def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """Embed multiple texts in a single Ollama call (much faster)."""
+    if not texts:
+        return []
+    try:
+        response = ollama.embed(model=EMBED_MODEL, input=texts)
+        return response["embeddings"]
+    except Exception:
+        # Fallback: older Ollama versions don't support batch
+        print("[embedder] Batch embed not supported, falling back to sequential...")
+        return [_embed(t) for t in texts]
+
+
 def _smart_chunk_size(num_pages: int) -> int:
-    """Smaller chunks for small sites, larger chunks for bigger sites."""
+    """Optimized chunk sizes — larger chunks = fewer Ollama calls = faster."""
     if num_pages < 10:
-        return 300
-    return 500
+        return 500
+    return 800
+
+
+def _semantic_split(content: str, max_chunk_size: int = 800) -> list[str]:
+    """
+    Two-stage semantic chunking:
+    1. Split by Markdown headers (keeps sections like ## Pricing intact)
+    2. Only use RecursiveCharacterTextSplitter on chunks that are still too large
+    
+    This ensures structured content (tables, FAQ sections) stays in one chunk,
+    while very long sections still get split reasonably.
+    """
+    # Stage 1: Split by markdown headers
+    headers_to_split_on = [
+        ("#", "heading_1"),
+        ("##", "heading_2"),
+        ("###", "heading_3"),
+    ]
+    
+    md_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=headers_to_split_on,
+        strip_headers=False,  # Keep headers in the chunk text for context
+    )
+    
+    try:
+        md_chunks = md_splitter.split_text(content)
+    except Exception as e:
+        print(f"[embedder] Markdown split failed ({e}), falling back to character split")
+        # Fallback: treat entire content as one chunk for stage 2
+        md_chunks = []
+    
+    # If markdown splitting produced nothing (e.g. plain text with no headers),
+    # fall back to RecursiveCharacterTextSplitter on the whole content
+    if not md_chunks:
+        fallback_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size,
+            chunk_overlap=CHUNK_OVERLAP,
+            length_function=len,
+        )
+        return fallback_splitter.split_text(content)
+    
+    # Stage 2: Split any oversized header-based chunks with character splitter
+    final_chunks = []
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=max_chunk_size,
+        chunk_overlap=CHUNK_OVERLAP,
+        length_function=len,
+    )
+    
+    for doc in md_chunks:
+        chunk_text = doc.page_content
+        # Prepend the header path as context (e.g. "Pricing > Plans")
+        header_parts = [v for k, v in doc.metadata.items() if v]
+        if header_parts:
+            header_context = " > ".join(header_parts)
+            chunk_text = f"Section: {header_context}\n{chunk_text}"
+        
+        if len(chunk_text) > max_chunk_size:
+            # This section is too large — split it further
+            sub_chunks = char_splitter.split_text(chunk_text)
+            final_chunks.extend(sub_chunks)
+        else:
+            final_chunks.append(chunk_text)
+    
+    return final_chunks
 
 
 def hybrid_rerank(chunks_list: list[dict], query: str) -> list[dict]:
@@ -130,13 +208,8 @@ def embed_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> N
 
     if chunk_size is None:
         chunk_size = _smart_chunk_size(len(pages))
-    print(f"[embedder] Using chunk_size={chunk_size} (smart chunking)")
+    print(f"[embedder] Using chunk_size={chunk_size} (semantic + smart chunking)")
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=CHUNK_OVERLAP,
-        length_function=len,
-    )
     all_embeddings, all_documents, all_metadatas, all_ids = [], [], [], []
     total_chunks = 0
 
@@ -154,7 +227,8 @@ def embed_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> N
             print(f"[embedder]   Skipping empty page: {url}")
             continue
 
-        raw_chunks = splitter.split_text(content)
+        # Use semantic splitting (markdown headers first, then character fallback)
+        raw_chunks = _semantic_split(content, max_chunk_size=chunk_size)
         print(f"[embedder]   {url} -> {len(raw_chunks)} chunks")
         
         for i, chunk in enumerate(raw_chunks):
@@ -166,7 +240,6 @@ def embed_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> N
             
             enriched_chunk = meta_header + chunk
             
-            all_embeddings.append(_embed(enriched_chunk))
             all_documents.append(enriched_chunk)
             all_metadatas.append({
                 "source_url": url, 
@@ -177,6 +250,11 @@ def embed_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> N
             })
             all_ids.append(str(uuid.uuid4()))
             total_chunks += 1
+
+    # Batch embed ALL chunks in a single Ollama call (massive speedup)
+    if all_documents:
+        print(f"[embedder] Batch-embedding {total_chunks} chunks...")
+        all_embeddings = _embed_batch(all_documents)
 
     if all_ids:
         collection.add(
@@ -283,14 +361,24 @@ if __name__ == "__main__":
             print(f"  [{r['distance']}] {r['source_url']}")
             print(f"  {r['text'][:120]}...")
 
-    # Test 3 -- Duplicate prevention
-    print("\n--- TEST 3: Duplicate prevention ---")
+    # Test 3 -- Empty page guard
+    print("\n--- TEST 3: Empty page ---")
+    embed_and_store(BOT_ID, [{"url": "https://example.com/empty", "text": "", "markdown": "", "title": "", "description": ""}])
+
+    # Test 4 -- Duplicate prevention
+    print("\n--- TEST 4: Duplicate prevention ---")
     embed_and_store(bot_id=BOT_ID, pages=fake_pages)
     col = chroma_client.get_collection(f"bot_{BOT_ID}")
     count = col.count()
-    print(f"Chunk count: {count}")
-    assert count == 3, f"Expected 3 chunks, got {count}"
-    print("Duplicate prevention OK.")
+    print(f"Chunk count after second run: {count}")
+    assert count == 3, f"Expected 3 chunks, got {count} -- duplicate prevention FAILED!"
+    print("Duplicate prevention OK: chunk count stayed at 3, not 6.")
+
+    # Test 5 -- Smart chunking override
+    print("\n--- TEST 5: Manual chunk_size override ---")
+    embed_and_store(bot_id="override_test", pages=fake_pages, chunk_size=200)
+    col2 = chroma_client.get_collection("bot_override_test")
+    print(f"Override test chunk count: {col2.count()} (should be >= 3 with smaller chunks)")
 
     print("\n" + "=" * 60)
     print("  All tests passed!")
