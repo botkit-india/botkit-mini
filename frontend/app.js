@@ -2,7 +2,8 @@
 // BotKit India — Frontend Logic
 // ========================================
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "http://127.0.0.1:8000";
+let chatHistory = [];
 
 
 // ========================================
@@ -294,7 +295,7 @@ async function sendMessage() {
         const res = await fetch(`${API_BASE}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bot_id: botId, question }),
+            body: JSON.stringify({ bot_id: botId, question, history: chatHistory }),
         });
 
         showThinking(false);
@@ -306,6 +307,10 @@ async function sendMessage() {
             addBotMessage(`⚠️ ${data.detail || "Error getting answer."}`);
             return;
         }
+
+        // Store history for follow-up questions
+        chatHistory.push({ role: "user", content: question });
+        chatHistory.push({ role: "assistant", content: data.answer });
 
         addBotMessage(data.answer, data.sources || []);
 

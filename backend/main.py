@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -57,6 +58,7 @@ class CrawlRequest(BaseModel):
 class ChatRequest(BaseModel):
     bot_id: str
     question: str
+    history: Optional[List[Dict[str, str]]] = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────
@@ -184,7 +186,7 @@ def chat(req: ChatRequest, current_user=Depends(get_current_user)):
         )
 
     try:
-        result = answer_question(req.bot_id, req.question)
+        result = answer_question(req.bot_id, req.question, req.history)
         return {
             "bot_id": req.bot_id,
             "question": req.question,
