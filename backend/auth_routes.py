@@ -109,9 +109,11 @@ def login(req: LoginRequest):
 
 @router.post("/google")
 async def google_auth(req: GoogleAuthRequest):
+    # Verify access token by getting user info from Google
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            f"https://oauth2.googleapis.com/tokeninfo?id_token={req.token}"
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {req.token}"}
         )
 
     if res.status_code != 200:
