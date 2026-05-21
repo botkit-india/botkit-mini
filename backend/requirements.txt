@@ -4,10 +4,14 @@ requests
 beautifulsoup4
 langchain
 langchain-community
-langchain-text-splitters
 chromadb
 groq
 python-dotenv
 ollama
 playwright
+pymongo
+python-jose[cryptography]
+bcrypt
+python-multipart
+httpx
 markdownify
