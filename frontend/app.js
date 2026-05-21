@@ -325,7 +325,7 @@ async function sendMessage() {
         chatHistory.push({ role: "user", content: question });
         chatHistory.push({ role: "assistant", content: data.answer });
 
-        addBotMessage(data.answer, data.sources || []);
+        addBotMessage(data.answer, data.sources || [], data.language || 'en');
 
     } catch {
         showThinking(false);
@@ -351,7 +351,7 @@ function addUserMessage(text) {
     scrollToBottom();
 }
 
-function addBotMessage(text, sources = []) {
+function addBotMessage(text, sources = [], language = 'en') {
     const chat = document.getElementById("chat-window");
     if (!chat) return;
 
@@ -364,11 +364,27 @@ function addBotMessage(text, sources = []) {
         sourcesHtml = `<div class="sources">Sources: ${links}</div>`;
     }
 
+    let langBadgeHtml = "";
+    if (language && language !== "en") {
+        const LANG_LABELS = {
+            hi:'\ud83c\uddee\ud83c\uddf3 Hindi', mr:'\ud83c\uddee\ud83c\uddf3 Marathi', ta:'\ud83c\uddee\ud83c\uddf3 Tamil',
+            bn:'\ud83c\uddee\ud83c\uddf3 Bengali', te:'\ud83c\uddee\ud83c\uddf3 Telugu', gu:'\ud83c\uddee\ud83c\uddf3 Gujarati',
+            kn:'\ud83c\uddee\ud83c\uddf3 Kannada', ml:'\ud83c\uddee\ud83c\uddf3 Malayalam', pa:'\ud83c\uddee\ud83c\uddf3 Punjabi',
+            ur:'\ud83c\udf0d Urdu', ar:'\ud83c\udf0d Arabic', es:'\ud83c\udf0d Spanish',
+            fr:'\ud83c\udf0d French', de:'\ud83c\udf0d German', ja:'\ud83c\udf0d Japanese',
+            zh:'\ud83c\udf0d Chinese', ru:'\ud83c\udf0d Russian', ko:'\ud83c\udf0d Korean',
+            it:'\ud83c\udf0d Italian', pt:'\ud83c\udf0d Portuguese', nl:'\ud83c\udf0d Dutch'
+        };
+        const label = LANG_LABELS[language] || language;
+        langBadgeHtml = `<div style="display:inline-block;font-size:11px;color:#4B5563;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:999px;padding:2px 10px;margin-top:6px;">Answered in ${label}</div>`;
+    }
+
     const div = document.createElement("div");
     div.className = "message bot-message";
     div.innerHTML = `
         <div class="bubble">${escapeHtml(text)}</div>
         ${sourcesHtml}
+        ${langBadgeHtml}
         <div class="timestamp">${getTime()}</div>
     `;
     chat.appendChild(div);

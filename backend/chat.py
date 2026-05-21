@@ -1,3 +1,15 @@
+"""
+chat.py -- Multi-Language + Conversational Memory RAG
+-----------------------------------------------------
+Author  : Manav
+Branch  : manav/dev
+
+Features:
+- Conversational Memory (history support)
+- Query Rewriting (uses history to create a self-contained search query)
+- Multi-Language Support (auto-detect + translate via Groq LLM)
+"""
+
 import os
 from groq import Groq
 from dotenv import load_dotenv
@@ -9,6 +21,17 @@ load_dotenv(Path(__file__).parent / '.env')
 
 # Initialize Groq client
 groq_client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+
+# Supported language names for prompt generation
+LANG_NAMES = {
+    'en': 'English', 'hi': 'Hindi', 'es': 'Spanish', 'fr': 'French',
+    'de': 'German', 'ja': 'Japanese', 'zh': 'Chinese', 'ar': 'Arabic',
+    'pt': 'Portuguese', 'ko': 'Korean', 'ru': 'Russian', 'bn': 'Bengali',
+    'ta': 'Tamil', 'te': 'Telugu', 'mr': 'Marathi', 'gu': 'Gujarati',
+    'kn': 'Kannada', 'ml': 'Malayalam', 'pa': 'Punjabi', 'ur': 'Urdu',
+    'it': 'Italian', 'nl': 'Dutch', 'tr': 'Turkish', 'th': 'Thai',
+    'vi': 'Vietnamese', 'id': 'Indonesian', 'ms': 'Malay', 'sw': 'Swahili'
+}
 
 
 def rewrite_query(question, chat_history):
@@ -51,24 +74,96 @@ Standalone Rewritten Question:"""
         return question
 
 
-def answer_question(bot_id, question, chat_history=None):
+def detect_language(text):
+    """
+    Use LLM to detect the language of the user's input.
+    Returns a language code like 'en', 'hi', 'es', 'fr', etc.
+    """
+    prompt = f"""Detect the language of the following text. 
+Reply with ONLY the ISO 639-1 language code (e.g., en, hi, es, fr, de, ja, zh, ar, pt, ko, ru, bn, ta, te, mr, gu, kn, ml, pa, ur).
+If you're unsure, reply with 'en'.
+
+Text: {text}
+
+Language code:"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model='llama-3.3-70b-versatile',
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=5,
+            temperature=0.0
+        )
+        lang = response.choices[0].message.content.strip().lower()[:2]
+        print(f"[chat] Detected language: {lang}")
+        return lang
+    except Exception as e:
+        print(f"[chat] Language detection failed: {e}")
+        return "en"
+
+
+def translate_text(text, source_lang, target_lang):
+    """
+    Translate text from source_lang to target_lang using LLM.
+    If source and target are the same, return text as-is.
+    """
+    if source_lang == target_lang:
+        return text
+
+    src_name = LANG_NAMES.get(source_lang, source_lang)
+    tgt_name = LANG_NAMES.get(target_lang, target_lang)
+
+    prompt = f"""Translate the following text from {src_name} to {tgt_name}.
+Output ONLY the translated text. Do not add any explanation.
+
+Text: {text}
+
+Translation:"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model='llama-3.3-70b-versatile',
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=600,
+            temperature=0.1
+        )
+        translated = response.choices[0].message.content.strip()
+        print(f"[chat] Translated ({src_name} -> {tgt_name}): {translated[:80]}...")
+        return translated
+    except Exception as e:
+        print(f"[chat] Translation failed: {e}")
+        return text  # Fallback: return original text
+
+
+def answer_question(bot_id, question, chat_history=None, language=None):
     """
     Main RAG function.
     Takes a bot_id, question, and optional chat history.
     Returns an answer from Groq based only on the website context.
+    Now supports multi-language: detects user language, searches in English, responds in user's language.
     """
     if chat_history is None:
         chat_history = []
 
-    # Step 1 — Rewrite query if history exists, then retrieve chunks
-    search_query = rewrite_query(question, chat_history)
+    # Step 0 — Detect user's language (or use the one passed in)
+    user_lang = language or detect_language(question)
+
+    # Step 0.5 — Translate question to English for RAG search (if not already English)
+    english_question = translate_text(question, user_lang, "en") if user_lang != "en" else question
+
+    # Step 1 — Rewrite query if history exists, then retrieve chunks (always in English)
+    search_query = rewrite_query(english_question, chat_history)
     print(f"\nSearching ChromaDB for: '{search_query}'")
     results = retrieve(bot_id, search_query, top_k=7)
 
     if not results:
+        no_info_msg = "I don't have any information about that website yet. Please crawl a website first."
+        if user_lang != "en":
+            no_info_msg = translate_text(no_info_msg, "en", user_lang)
         return {
-            'answer': "I don't have any information about that website yet. Please crawl a website first.",
-            'sources': []
+            'answer': no_info_msg,
+            'sources': [],
+            'language': user_lang
         }
 
     # Step 2 — Build context from retrieved chunks
@@ -78,7 +173,9 @@ def answer_question(bot_id, question, chat_history=None):
     sources = list(set(r['source_url'] for r in results))
     print(f"Found {len(results)} relevant chunks from {len(sources)} pages")
 
-    # Step 4 — Build system prompt instructions
+    # Step 4 — Build system prompt instructions (with language instruction)
+    response_lang = LANG_NAMES.get(user_lang, 'English')
+
     system_instruction = f"""You are a helpful AI assistant for a website. Follow these rules strictly:
 
 1. **Answer ONLY from the context below.** Never use outside knowledge. Never make up information.
@@ -89,6 +186,8 @@ def answer_question(bot_id, question, chat_history=None):
 6. **Preserve structure:** If the context contains tables, lists, or pricing tiers, format your answer in a structured way (use bullet points or numbered lists).
 7. **If a specific product is not found**, do NOT suggest alternatives unless their names are nearly identical (e.g. same first word).
 8. **If the answer is genuinely not in the context**, say exactly: "I don't have information about that on this website."
+
+IMPORTANT: You MUST respond in {response_lang} language.
 
 Context:
 {context}"""
@@ -122,7 +221,8 @@ Context:
 
     return {
         'answer': answer,
-        'sources': sources
+        'sources': sources,
+        'language': user_lang
     }
 
 
@@ -131,7 +231,7 @@ if __name__ == "__main__":
     from crawler import crawl_website
     from embedder import embed_and_store
 
-    print("=== FULL RAG PIPELINE TEST ===\n")
+    print("=== FULL RAG PIPELINE TEST (with Multi-Language) ===\n")
 
     # Step 1 — Crawl a website
     print("Step 1: Crawling website...")
@@ -145,42 +245,15 @@ if __name__ == "__main__":
     embed_and_store(bot_id, pages)
     print("Stored successfully\n")
 
-    # Step 3 — Ask questions
-    print("Step 3: Asking questions...\n")
+    # Step 3 — Ask questions in multiple languages
+    print("Step 3: Multi-language questions...\n")
 
-    questions = [
-        "What kind of books are available?",
-        "What categories exist on this website?",
-        "What is the price of books?",
-        "Do you sell electronics?"
-    ]
-
-    for q in questions:
-        print(f"Q: {q}")
-        result = answer_question(bot_id, q)
-        print(f"A: {result['answer']}")
-        print(f"Sources: {result['sources']}")
-        print("-" * 50)
-
-    # Step 4 — Ask follow-up questions to test conversational memory
-    print("\nStep 4: Testing conversational memory...\n")
     history = []
     
+    # Q1 — English
     q1 = "What is the price of Tipping the Velvet?"
-    print(f"Q: {q1}")
+    print(f"Q (English): {q1}")
     res1 = answer_question(bot_id, q1, history)
     print(f"A: {res1['answer']}")
-    print(f"Sources: {res1['sources']}")
-    print("-" * 50)
-    
-    # Add to history
-    history.append({"role": "user", "content": q1})
-    history.append({"role": "assistant", "content": res1["answer"]})
-
-    # Q2 (Follow up using conversational memory)
-    q2 = "Is it in stock?"
-    print(f"Q: {q2}")
-    res2 = answer_question(bot_id, q2, history)
-    print(f"A: {res2['answer']}")
-    print(f"Sources: {res2['sources']}")
+    print(f"Detected Language: {res1['language']}")
     print("-" * 50)

@@ -47,6 +47,7 @@ class ChatRequest(BaseModel):
     bot_id: str
     question: str
     history: Optional[List[Dict[str, str]]] = None
+    language: Optional[str] = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────
@@ -132,12 +133,13 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
-        result = answer_question(req.bot_id, req.question, req.history)
+        result = answer_question(req.bot_id, req.question, req.history, req.language)
         return {
             "bot_id": req.bot_id,
             "question": req.question,
             "answer": result["answer"],
-            "sources": result["sources"]
+            "sources": result["sources"],
+            "language": result.get("language", "en")
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
