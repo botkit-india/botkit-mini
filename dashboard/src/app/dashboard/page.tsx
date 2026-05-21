@@ -15,7 +15,7 @@ interface Bot {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const user = getUser();
+  const [user, setUser] = useState<any>(null);
   const [bots, setBots] = useState<Bot[]>([]);
   const [url, setUrl] = useState('');
   const [creating, setCreating] = useState(false);
@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
+    setUser(getUser());
     fetchBots();
   }, []);
 

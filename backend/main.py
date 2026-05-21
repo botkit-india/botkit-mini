@@ -88,9 +88,9 @@ def crawl(req: CrawlRequest, current_user=Depends(get_current_user)):
     def run_crawl():
         start_time = time.time()
         try:
-            pages = crawl_website(req.url, max_pages=30)
+            pages = crawl_website(req.url, max_pages=5)
 
-            if time.time() - start_time > 300:
+            if time.time() - start_time > 900:  # Increased from 5 mins to 15 mins
                 bot_status[bot_id] = "error"
                 bot_info[bot_id]["error"] = "Crawl timed out."
                 return
