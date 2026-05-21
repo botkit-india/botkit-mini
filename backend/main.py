@@ -167,7 +167,7 @@ def list_bots():
 
 
 @app.post("/chat")
-def chat(req: ChatRequest, current_user=Depends(get_current_user)):
+def chat(req: ChatRequest):
     if req.bot_id not in bot_status:
         raise HTTPException(
             status_code=404,
