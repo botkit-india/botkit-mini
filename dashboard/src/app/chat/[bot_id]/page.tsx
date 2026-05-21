@@ -13,8 +13,7 @@ interface Message {
 
 function SourceLinks({ sources }: { sources: string[] }) {
   return (
-    <div className="text-xs text-gray-400 mt-1 px-1">
-      {'Sources: '}
+    <div className="flex flex-wrap gap-2 mt-2">
       {sources.map((s, idx) => {
         let hostname = s;
         try {
@@ -28,8 +27,9 @@ function SourceLinks({ sources }: { sources: string[] }) {
             href={s}
             target="_blank"
             rel="noreferrer"
-            className="text-blue-500 hover:underline mr-2"
+            className="inline-flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full hover:bg-indigo-100 transition"
           >
+            <span>🔗</span>
             {hostname}
           </a>
         );
@@ -38,18 +38,51 @@ function SourceLinks({ sources }: { sources: string[] }) {
   );
 }
 
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-sm flex-shrink-0">
+        🤖
+      </div>
+      <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-1">
+          {[0, 1, 2].map(i => (
+            <div
+              key={i}
+              className="w-2 h-2 bg-indigo-400 rounded-full"
+              style={{
+                animation: 'bounce 1.2s infinite ease-in-out',
+                animationDelay: `${i * 0.2}s`
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const suggestions = [
+  'What does this website offer?',
+  'How can I contact you?',
+  'What are your pricing plans?',
+  'Tell me about your services'
+];
+
 export default function ChatPage() {
   const { bot_id } = useParams();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMessages([{
       role: 'bot',
-      text: 'Hi! Ask me anything about this website.',
+      text: 'Hi! I am your website assistant. Ask me anything about this website and I will answer from its content.',
       time: getTime()
     }]);
   }, []);
@@ -58,21 +91,22 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
 
-  async function handleSend() {
-    if (!input.trim() || thinking) return;
-    const question = input.trim();
+  async function handleSend(question?: string) {
+    const q = question || input.trim();
+    if (!q || thinking) return;
     setInput('');
+    setShowSuggestions(false);
 
     setMessages(prev => [...prev, {
       role: 'user',
-      text: question,
+      text: q,
       time: getTime()
     }]);
 
     setThinking(true);
 
     try {
-      const res = await sendQuestion(bot_id as string, question);
+      const res = await sendQuestion(bot_id as string, q);
       setMessages(prev => [...prev, {
         role: 'bot',
         text: res.data.answer,
@@ -82,11 +116,12 @@ export default function ChatPage() {
     } catch (err: any) {
       setMessages(prev => [...prev, {
         role: 'bot',
-        text: '⚠️ ' + (err.response?.data?.detail || 'Something went wrong.'),
+        text: 'Sorry, I ran into an error: ' + (err.response?.data?.detail || 'Something went wrong.'),
         time: getTime()
       }]);
     } finally {
       setThinking(false);
+      inputRef.current?.focus();
     }
   }
 
@@ -100,54 +135,92 @@ export default function ChatPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
       {/* Header */}
-      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
+      <nav className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between sticky top-0 z-40">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200 transition text-sm"
+          >
+            {'<-'}
+          </button>
+          <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-sm">
+            🤖
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold text-gray-900">Website Assistant</h1>
+            <p className="text-xs text-green-500 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-500 rounded-full inline-block" />
+              Online · Bot {bot_id}
+            </p>
+          </div>
+        </div>
         <button
-          onClick={() => router.push('/dashboard')}
-          className="text-gray-400 hover:text-gray-600 transition"
+          onClick={() => {
+            setMessages([{
+              role: 'bot',
+              text: 'Hi! I am your website assistant. Ask me anything about this website.',
+              time: getTime()
+            }]);
+            setShowSuggestions(true);
+          }}
+          className="text-xs text-gray-400 hover:text-gray-600 transition px-3 py-1.5 rounded-lg hover:bg-gray-100"
         >
-          ← Back
+          Clear chat
         </button>
-        <h1 className="text-sm font-semibold text-gray-800">
-          Bot: {bot_id}
-        </h1>
       </nav>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 max-w-2xl mx-auto w-full">
-        <div className="flex flex-col gap-4">
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-2xl mx-auto flex flex-col gap-4">
+
           {messages.map((msg, i) => (
             <div
               key={i}
-              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+              className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
             >
-              <div className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+              {/* Avatar */}
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0 ${
                 msg.role === 'user'
-                  ? 'bg-blue-600 text-white rounded-br-sm'
-                  : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm'
+                  ? 'gradient-btn text-white'
+                  : 'bg-indigo-100'
               }`}>
-                {msg.text}
+                {msg.role === 'user' ? '👤' : '🤖'}
               </div>
 
-              {msg.sources && msg.sources.length > 0 && (
-                <SourceLinks sources={msg.sources} />
-              )}
+              {/* Bubble */}
+              <div className={`flex flex-col max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                  msg.role === 'user'
+                    ? 'gradient-btn text-white rounded-tr-sm'
+                    : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm'
+                }`}>
+                  {msg.text}
+                </div>
 
-              <span className="text-xs text-gray-400 mt-1 px-1">{msg.time}</span>
+                {msg.sources && msg.sources.length > 0 && (
+                  <SourceLinks sources={msg.sources} />
+                )}
+
+                <span className="text-xs text-gray-400 mt-1 px-1">{msg.time}</span>
+              </div>
             </div>
           ))}
 
-          {/* Thinking indicator */}
-          {thinking && (
-            <div className="flex items-start">
-              <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-sm flex gap-1">
-                {[0, 1, 2].map(i => (
-                  <div
-                    key={i}
-                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                    style={{ animationDelay: `${i * 0.15}s` }}
-                  />
-                ))}
-              </div>
+          {/* Thinking */}
+          {thinking && <ThinkingIndicator />}
+
+          {/* Suggestion chips */}
+          {showSuggestions && messages.length === 1 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSend(s)}
+                  className="text-xs bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-full hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                >
+                  {s}
+                </button>
+              ))}
             </div>
           )}
 
@@ -156,24 +229,34 @@ export default function ChatPage() {
       </div>
 
       {/* Input */}
-      <div className="bg-white border-t border-gray-200 px-4 py-4">
-        <div className="max-w-2xl mx-auto flex gap-3">
-          <input
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Ask a question..."
-            disabled={thinking}
-            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-          />
-          <button
-            onClick={handleSend}
-            disabled={thinking || !input.trim()}
-            className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition"
-          >
-            Send
-          </button>
+      <div className="bg-white border-t border-gray-100 px-4 py-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex gap-3 items-end">
+            <div className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 flex items-center gap-3 focus-within:border-indigo-300 focus-within:bg-white transition">
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSend()}
+                placeholder="Ask a question about this website..."
+                disabled={thinking}
+                className="flex-1 bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none disabled:opacity-50"
+              />
+            </div>
+            <button
+              onClick={() => handleSend()}
+              disabled={thinking || !input.trim()}
+              className="w-11 h-11 gradient-btn text-white rounded-xl flex items-center justify-center disabled:opacity-50 transition flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 text-center mt-2">
+            Powered by BotKit India · Answers from website content only
+          </p>
         </div>
       </div>
     </div>
