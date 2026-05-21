@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from datetime import datetime
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from pdf_processor import process_and_embed_pdf
 
 from crawler import crawl_website
 from embedder import embed_and_store
@@ -211,4 +213,69 @@ def my_bots(current_user=Depends(get_current_user)):
     return {
         'total': len(bots),
         'bots': bots
+    }
+
+@app.post("/bots/{bot_id}/upload")
+async def upload_pdf(
+    bot_id: str,
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user)
+):
+    """
+    Upload a PDF file to add to an existing bot's knowledge base.
+    """
+    # Check bot exists
+    if bot_id not in bot_status and not bots_collection.find_one({'bot_id': bot_id}):
+        raise HTTPException(status_code=404, detail="Bot not found.")
+
+    # Validate file type
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    # Validate file size — max 10MB
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Max size is 10MB.")
+
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="File is empty.")
+
+    try:
+        pages_added = process_and_embed_pdf(bot_id, file_bytes, file.filename)
+
+        # Update MongoDB to track uploaded files
+        bots_collection.update_one(
+            {'bot_id': bot_id},
+            {'$push': {
+                'uploaded_files': {
+                    'filename': file.filename,
+                    'pages': pages_added,
+                    'uploaded_at': datetime.utcnow()
+                }
+            }}
+        )
+
+        return {
+            'bot_id': bot_id,
+            'filename': file.filename,
+            'pages_extracted': pages_added,
+            'message': f'Successfully added {file.filename} to bot knowledge base.'
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+
+
+@app.get("/bots/{bot_id}/files")
+def get_bot_files(bot_id: str, current_user=Depends(get_current_user)):
+    """Get list of uploaded files for a bot."""
+    bot = bots_collection.find_one({'bot_id': bot_id}, {'_id': 0})
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found.")
+
+    return {
+        'bot_id': bot_id,
+        'uploaded_files': bot.get('uploaded_files', [])
     }
