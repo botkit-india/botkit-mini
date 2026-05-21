@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getMyBots, crawlWebsite, getBotStatus } from '@/lib/api';
+import { getMyBots, crawlWebsite, getBotStatus, uploadPDF } from '@/lib/api';
 import { getUser, logout } from '@/lib/auth';
 
 interface Bot {
@@ -24,6 +24,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [uploadingBot, setUploadingBot] = useState<string | null>(null);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const [uploadError, setUploadError] = useState('');
 
   useEffect(() => {
     fetchBots();
@@ -76,6 +79,24 @@ export default function DashboardPage() {
       setStatusMsg('Failed: ' + (err.response?.data?.detail || 'Unknown error'));
       setStatusType('error');
       setCreating(false);
+    }
+  }
+
+  async function handlePDFUpload(botId: string, file: File) {
+    setUploadingBot(botId);
+    setUploadMsg('Uploading and processing PDF...');
+    setUploadError('');
+
+    try {
+      const res = await uploadPDF(botId, file);
+      setUploadMsg(`✅ ${res.data.filename} added — ${res.data.pages_extracted} pages learned`);
+      setTimeout(() => {
+        setUploadMsg('');
+        setUploadingBot(null);
+      }, 3000);
+    } catch (err: any) {
+      setUploadError(err.response?.data?.detail || 'Upload failed.');
+      setUploadingBot(null);
     }
   }
 
@@ -155,6 +176,18 @@ export default function DashboardPage() {
           ))}
         </div>
 
+        {/* Upload messages */}
+        {uploadMsg && (
+          <div className="mb-4 bg-green-50 text-green-600 text-sm px-4 py-3 rounded-xl">
+            {uploadMsg}
+          </div>
+        )}
+        {uploadError && (
+          <div className="mb-4 bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl">
+            ⚠️ {uploadError}
+          </div>
+        )}
+
         {/* Bot List */}
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-800">Your Chatbots</h2>
@@ -199,7 +232,7 @@ export default function DashboardPage() {
                   key={bot.bot_id}
                   className="bg-white rounded-2xl border border-gray-100 p-5 hover:border-indigo-200 hover:shadow-sm transition-all duration-200"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-2xl">
                         🌐
@@ -212,7 +245,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-600 text-xs font-medium px-3 py-1 rounded-full">
                         <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
                         Ready
@@ -235,6 +268,26 @@ export default function DashboardPage() {
                       >
                         {copiedId === bot.bot_id ? '✓ Copied!' : 'Copy Widget'}
                       </button>
+
+                      {/* PDF Upload */}
+                      <label className={`px-4 py-2 rounded-lg text-sm font-medium transition border cursor-pointer ${
+                        uploadingBot === bot.bot_id
+                          ? 'bg-amber-50 text-amber-600 border-amber-200'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}>
+                        {uploadingBot === bot.bot_id ? '⏳ Processing...' : '📄 Add PDF'}
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          className="hidden"
+                          disabled={uploadingBot === bot.bot_id}
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (file) handlePDFUpload(bot.bot_id, file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
                     </div>
                   </div>
                 </div>
