@@ -31,6 +31,7 @@ app.include_router(auth_router)
 @app.on_event("startup")
 async def startup():
     create_indexes()
+    _load_saved_bots_into_memory()
 # Allow frontend to call this API
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +51,44 @@ app.mount(
 # { bot_id: "crawling" | "ready" | "error" }
 bot_status = {}
 bot_info = {}
+
+
+def _load_saved_bots_into_memory():
+    """
+    Rehydrate bot state from MongoDB after backend restarts.
+    """
+    loaded = 0
+    for bot in bots_collection.find({}, {'_id': 0}):
+        bot_id = bot.get('bot_id')
+        if not bot_id:
+            continue
+        bot_status[bot_id] = bot.get('status', 'ready')
+        bot_info[bot_id] = {
+            "url": bot.get("url", ""),
+            "pages_crawled": bot.get("pages_crawled", 0),
+            "owner_id": bot.get("owner_id"),
+            "error": bot.get("error")
+        }
+        loaded += 1
+    print(f"[main] Rehydrated {loaded} bot(s) from MongoDB")
+
+
+def _sync_bot_from_db(bot_id: str):
+    """
+    Load one bot from MongoDB into in-memory state if present.
+    """
+    bot = bots_collection.find_one({'bot_id': bot_id}, {'_id': 0})
+    if not bot:
+        return None
+
+    bot_status[bot_id] = bot.get('status', 'ready')
+    bot_info[bot_id] = {
+        "url": bot.get("url", ""),
+        "pages_crawled": bot.get("pages_crawled", 0),
+        "owner_id": bot.get("owner_id"),
+        "error": bot.get("error")
+    }
+    return bot
 
 
 # ─── Request Models ───────────────────────────────────────────
@@ -139,7 +178,8 @@ def status(bot_id: str):
     Frontend polls this every 2 seconds after calling /crawl.
     """
     if bot_id not in bot_status:
-        raise HTTPException(status_code=404, detail="Bot not found.")
+        if not _sync_bot_from_db(bot_id):
+            raise HTTPException(status_code=404, detail="Bot not found.")
 
     return {
         "bot_id": bot_id,
@@ -171,10 +211,11 @@ def list_bots():
 @app.post("/chat")
 def chat(req: ChatRequest):
     if req.bot_id not in bot_status:
-        raise HTTPException(
-            status_code=404,
-            detail="Bot not found. Please crawl your website again."
-        )
+        if not _sync_bot_from_db(req.bot_id):
+            raise HTTPException(
+                status_code=404,
+                detail="Bot not found. Please crawl your website again."
+            )
 
     if bot_status[req.bot_id] != "ready":
         raise HTTPException(

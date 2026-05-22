@@ -1,6 +1,6 @@
 import PyPDF2
 import io
-from embedder import embed_and_store
+from embedder import append_and_store
 
 def extract_text_from_pdf(file_bytes: bytes, filename: str) -> list[dict]:
     """
@@ -42,5 +42,5 @@ def process_and_embed_pdf(bot_id: str, file_bytes: bytes, filename: str) -> int:
     if not pages:
         raise ValueError("No text could be extracted from this PDF.")
 
-    embed_and_store(bot_id, pages)
+    append_and_store(bot_id, pages)
     return len(pages)

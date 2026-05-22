@@ -17,15 +17,17 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHea
 import uuid
 import sys
 import re
+from pathlib import Path
 
 CHUNK_SIZE    = 500
 CHUNK_OVERLAP = 50
 EMBED_MODEL   = "nomic-embed-text"
 
-# NOTE: EphemeralClient stores data IN MEMORY only.
-# TODO: Switch to PersistentClient for full product:
-#   chromadb.PersistentClient(path="./chromadb_data")
-chroma_client = chromadb.EphemeralClient()
+CHROMA_DIR = Path(__file__).parent / "chromadb_data"
+CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Persist embeddings to disk so bots keep working after backend restarts.
+chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
 
 
 def _check_ollama():
@@ -383,3 +385,72 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  All tests passed!")
     print("=" * 60)
+
+def append_and_store(bot_id: str, pages: list[dict], chunk_size: int = None) -> None:
+    """
+    Append new pages into existing ChromaDB collection for this bot.
+    Does not delete previously stored website/PDF data.
+    """
+    print(f"\n[embedder] Starting append_and_store: bot_id={bot_id!r}")
+    print(f"[embedder] Pages received: {len(pages)}")
+    _check_ollama()
+
+    collection = _get_collection(bot_id)
+
+    if chunk_size is None:
+        chunk_size = _smart_chunk_size(len(pages))
+    print(f"[embedder] Using chunk_size={chunk_size} (semantic + smart chunking)")
+
+    all_embeddings, all_documents, all_metadatas, all_ids = [], [], [], []
+    total_chunks = 0
+
+    for page in pages:
+        url = page.get("url", "unknown")
+        content = page.get("markdown", "")
+        if not content.strip():
+            content = page.get("text", "")
+
+        title = page.get("title", "")
+        description = page.get("description", "")
+
+        if not content.strip():
+            print(f"[embedder]   Skipping empty page: {url}")
+            continue
+
+        raw_chunks = _semantic_split(content, max_chunk_size=chunk_size)
+        print(f"[embedder]   {url} -> {len(raw_chunks)} chunks")
+
+        for i, chunk in enumerate(raw_chunks):
+            meta_header = f"Page Title: {title}\n" if title else ""
+            if description and i == 0:
+                meta_header += f"Description: {description}\n"
+            meta_header += f"URL: {url}\n\n"
+
+            enriched_chunk = meta_header + chunk
+
+            all_documents.append(enriched_chunk)
+            all_metadatas.append({
+                "source_url": url,
+                "chunk_index": i,
+                "bot_id": bot_id,
+                "title": title,
+                "description": description
+            })
+            all_ids.append(str(uuid.uuid4()))
+            total_chunks += 1
+
+    if all_documents:
+        print(f"[embedder] Batch-embedding {total_chunks} chunks...")
+        all_embeddings = _embed_batch(all_documents)
+
+    if all_ids:
+        collection.add(
+            embeddings=all_embeddings,
+            documents=all_documents,
+            metadatas=all_metadatas,
+            ids=all_ids,
+        )
+        print(f"\n[embedder] Appended {total_chunks} chunks (collection: bot_{bot_id})")
+        print(f"[embedder] Chunk count in ChromaDB: {collection.count()}")
+    else:
+        print("[embedder] No chunks generated.")
