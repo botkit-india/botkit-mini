@@ -69,6 +69,9 @@ const suggestions = [
   'Tell me about your services'
 ];
 
+const DEFAULT_BOT_MESSAGE =
+  'Hi! I am your website assistant. Ask me anything about this website and I will answer from its content.';
+
 export default function ChatPage() {
   const { bot_id } = useParams();
   const router = useRouter();
@@ -78,14 +81,35 @@ export default function ChatPage() {
   const [showSuggestions, setShowSuggestions] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const storageKey = bot_id ? `botkit-chat-${String(bot_id)}` : null;
 
   useEffect(() => {
+    if (!storageKey || typeof window === 'undefined') return;
+
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as Message[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          setShowSuggestions(parsed.length <= 1);
+          return;
+        }
+      } catch {}
+    }
+
     setMessages([{
       role: 'bot',
-      text: 'Hi! I am your website assistant. Ask me anything about this website and I will answer from its content.',
+      text: DEFAULT_BOT_MESSAGE,
       time: getTime()
     }]);
-  }, []);
+    setShowSuggestions(true);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || typeof window === 'undefined' || messages.length === 0) return;
+    window.localStorage.setItem(storageKey, JSON.stringify(messages));
+  }, [messages, storageKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -97,16 +121,26 @@ export default function ChatPage() {
     setInput('');
     setShowSuggestions(false);
 
-    setMessages(prev => [...prev, {
+    const userMessage: Message = {
       role: 'user',
       text: q,
       time: getTime()
-    }]);
+    };
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
 
     setThinking(true);
 
     try {
-      const res = await sendQuestion(bot_id as string, q);
+      const history = updatedMessages
+        .slice(-8)
+        .map(msg => ({
+          role: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.text
+        }));
+
+      const res = await sendQuestion(bot_id as string, q, undefined, history);
       setMessages(prev => [...prev, {
         role: 'bot',
         text: res.data.answer,
@@ -156,9 +190,12 @@ export default function ChatPage() {
         </div>
         <button
           onClick={() => {
+            if (storageKey && typeof window !== 'undefined') {
+              window.localStorage.removeItem(storageKey);
+            }
             setMessages([{
               role: 'bot',
-              text: 'Hi! I am your website assistant. Ask me anything about this website.',
+              text: DEFAULT_BOT_MESSAGE,
               time: getTime()
             }]);
             setShowSuggestions(true);

@@ -157,7 +157,10 @@ def answer_question(bot_id, question, chat_history=None, language=None):
     results = retrieve(bot_id, search_query, top_k=7)
 
     if not results:
-        no_info_msg = "I don't have any information about that website yet. Please crawl a website first."
+        no_info_msg = (
+            "I'm sorry, but I don't have any information from this website yet. "
+            "Please crawl the website first, and then I'll be happy to help."
+        )
         if user_lang != "en":
             no_info_msg = translate_text(no_info_msg, "en", user_lang)
         return {
@@ -185,7 +188,8 @@ def answer_question(bot_id, question, chat_history=None, language=None):
 5. **Synthesize multiple chunks:** If several context chunks mention the same topic, combine the information into one clear, coherent answer — do not repeat yourself.
 6. **Preserve structure:** If the context contains tables, lists, or pricing tiers, format your answer in a structured way (use bullet points or numbered lists).
 7. **If a specific product is not found**, do NOT suggest alternatives unless their names are nearly identical (e.g. same first word).
-8. **If the answer is genuinely not in the context**, say exactly: "I don't have information about that on this website."
+8. **If the answer is genuinely not in the context**, reply gently and briefly. Use wording like: "I'm sorry, but I couldn't find that information on this website. If you'd like, I can still help with questions about the content available here."
+9. **For out-of-scope questions**, be polite and never sound abrupt, dismissive, or robotic.
 
 IMPORTANT: You MUST respond in {response_lang} language.
 

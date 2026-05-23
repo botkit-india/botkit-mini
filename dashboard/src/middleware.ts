@@ -5,14 +5,15 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get('token')?.value;
   const { pathname } = request.nextUrl;
 
-  const publicRoutes = ['/login', '/signup'];
-  const isPublic = publicRoutes.includes(pathname);
+  const authRoutes = ['/login', '/signup'];
+  const isAuthRoute = authRoutes.includes(pathname);
+  const requiresAuth = pathname.startsWith('/chat');
 
-  if (!token && !isPublic) {
-    return NextResponse.redirect(new URL('/login', request.url));
+  if (!token && requiresAuth) {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  if (token && isPublic) {
+  if (token && isAuthRoute) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
